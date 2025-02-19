@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  aa_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aa_app
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: python aa_app.py
+  
+  
+  yfinance_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yfinance_app
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: python yfinance_app.py
+
+  one_stock:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: one_stock
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: python one_stock.py

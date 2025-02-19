@@ -1,0 +1,9 @@
+pandas
+yfinance
+numpy
+requests
+lxml
+aiohttp
+pyrate_limiter
+requests_cache
+requests_ratelimiter
