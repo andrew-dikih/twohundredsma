@@ -8,6 +8,7 @@ import random
 import os
 import json
 from ast import literal_eval
+import requests
 
 from requests import Session
 from requests_cache import CacheMixin, SQLiteCache
@@ -32,34 +33,47 @@ sp500_tickers = [(symbol.replace('.', '-'), name) for symbol, name in sp500_data
 end_date = datetime.today()
 start_date = end_date - timedelta(weeks=400)
 
-DATA_FILE = "dat/stock_data.pkl"
+DATA_FILE = f"dat/stock_data_{end_date.date()}.pkl"
 RESULT_FILE = f"dat/results_{end_date.date()}.json"
 CLOSE_COL = "Close"
 CUR_PRICE = "current_price"
 
-def load_data(tickers, force_refresh):
+def load_data(tickers):
     # Check if saved data exists and load it if not forcing refresh
-    if os.path.exists(DATA_FILE) and not force_refresh:
+    missing_tickers = []
+    if os.path.exists(DATA_FILE):
         print("Loading cached stock data...")
-        histories = pd.read_pickle(DATA_FILE)           
+        histories = pd.read_pickle(DATA_FILE)
+        print(f"Found data for {len(histories.columns.levels[1])} tickers in {DATA_FILE}")
+        missing_tickers = [ticker for ticker in tickers if ticker not in histories.columns.levels[1]]
+        if len(missing_tickers) == 0:
+            return histories
     else:
-        stocks = yf.Tickers(" ".join(tickers), session=session)
-        histories = stocks.history(period="400wk", interval="1d")
+        histories = pd.DataFrame()
 
-        # Save the downloaded data
-        histories.to_pickle(DATA_FILE)
-        print(f"Saved stock data to {DATA_FILE}")
+    missing_tickers = missing_tickers if missing_tickers else tickers       
+    stocks = yf.Tickers(" ".join(missing_tickers), session=session)
+    new_histories = stocks.history(period="400wk", interval="1d")
+    
+    if not histories.empty:
+        histories = pd.concat([histories, new_histories], axis=1)
+    else:
+        histories = new_histories
+
+    # Save the downloaded data
+    histories.to_pickle(DATA_FILE)
+    print(f"Saved stock data to {DATA_FILE}")
 
     return histories
 
-async def download_stock_data(tickers, force_refresh=False):
+async def download_stock_data(tickers):
     results = {}
     total_tickers = len(tickers)
     attempt = 0
     wait_time = 0
     while attempt < 5:
         try:
-            histories = load_data(tickers, force_refresh)
+            histories = load_data(tickers)
 
             histories.index = pd.to_datetime(histories.index)
             histories = histories[(histories.index >= start_date) & (histories.index <= end_date)]
@@ -91,6 +105,7 @@ async def download_stock_data(tickers, force_refresh=False):
 def process_stock_data(ticker, company_name, stock_data):
     entry = stock_data.get(ticker, None)
     if not entry or entry[CLOSE_COL] is None or entry[CUR_PRICE] is None:
+        print(f"Skipping {ticker} due to missing data")
         return None
     
     try:
@@ -134,6 +149,15 @@ def process_stock_data(ticker, company_name, stock_data):
         
         # Store results only if the current price is below the 200-week SMA
         if recent_sma and recent_sma > current_price and sma_slope >= 0.1 and slope_200_w >= 0.1:
+            url = f"https://www.google.com/finance/quote/{ticker}:NYSE?window=5Y"
+            try:
+                response = requests.get(url)
+                if "We couldn't find any match for your search" in response.text:
+                    url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
+            except requests.RequestException as e:
+                print(f"Error accessing URL for {ticker}: {e}")
+                url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
+
             return {
                 "Ticker": ticker,
                 "Company Name": company_name,
@@ -142,15 +166,15 @@ def process_stock_data(ticker, company_name, stock_data):
                 "% Below SMA": percentage_below_sma,
                 "SMA Slope": sma_slope,
                 "Slope 200W": slope_200_w,
-                "url": f"https://www.google.com/finance/quote/{ticker}:NYSE?window=5Y",
+                "url": url,
             }
     except Exception as e:
         print(f"Error processing {ticker}: {e}")
     return None
 
-async def main(force_refresh=False):
+async def main():
     tickers = [ticker for ticker, _ in sp500_tickers]
-    stock_data = await download_stock_data(tickers, force_refresh=force_refresh)
+    stock_data = await download_stock_data(tickers)
 
     results = [process_stock_data(ticker, company_name, stock_data) for ticker, company_name in sp500_tickers]
     results = [result for result in results if result]
@@ -160,7 +184,9 @@ async def main(force_refresh=False):
     pd.set_option('display.max_colwidth', None)  # Show full content in columns
     pd.set_option('display.width', 1500)
     print(results_df)
-    results_df.to_json(RESULT_FILE, orient='records', indent=4)
+    
+    # Overwrite the result file
+    results_df.to_json(RESULT_FILE, orient='records', indent=4, mode='w')
 
 # Run with caching (set force_refresh=True if you want fresh data)
-asyncio.run(main(force_refresh=False))
+asyncio.run(main())
