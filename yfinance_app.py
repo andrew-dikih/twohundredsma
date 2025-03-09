@@ -105,7 +105,7 @@ async def download_stock_data(tickers):
 def process_stock_data(ticker, company_name, stock_data):
     entry = stock_data.get(ticker, None)
     if not entry or entry[CLOSE_COL] is None or entry[CUR_PRICE] is None:
-        print(f"Skipping {ticker} due to missing data")
+        print(f"Skipping {ticker} due to missing data, try running again.")
         return None
     
     try:
