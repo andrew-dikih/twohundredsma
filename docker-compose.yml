@@ -21,6 +21,10 @@ services:
     volumes:
       - .:/app
     command: python yfinance_app.py
+    deploy:
+      resources:
+        limits:
+          memory: 30G  # Increased memory limit to 30 Gigabytes
 
   one_stock:
     build:

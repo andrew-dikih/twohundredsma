@@ -15,11 +15,13 @@ from requests_cache import CacheMixin, SQLiteCache
 from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
 from pyrate_limiter import Duration, RequestRate, Limiter
 
+from russell_2000 import russell2000_data
+
 class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
     pass
 
 session = CachedLimiterSession(
-    limiter=Limiter(RequestRate(5, Duration.SECOND*5)),  # max 2 requests per 5 seconds
+    limiter=Limiter(RequestRate(10, Duration.SECOND * 3)),  # Increased to 10 requests per 3 seconds
     bucket_class=MemoryQueueBucket,
     backend=SQLiteCache("yfinance.cache"),
 )
@@ -27,7 +29,21 @@ session.headers['User-agent'] = 'yfinance_app/1.0'
 
 # Load the list of S&P 500 tickers and company names
 sp500_data = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-sp500_tickers = [(symbol.replace('.', '-'), name) for symbol, name in sp500_data[['Symbol', 'Security']].values.tolist()]
+sp500_tickers = [(symbol.replace('.', '-'), name, 'S&P') for symbol, name in sp500_data[['Symbol', 'Security']].values.tolist()]
+sp500_set = {symbol for symbol, _, _ in sp500_tickers}
+
+# Load the list of Russell 2000 tickers and company names
+russell2000_tickers = [(symbol.replace('.', '-'), name, 'Russel') for symbol, name in russell2000_data]
+
+all_tickers = sp500_tickers
+
+# Combine S&P 500 and Russell 2000 tickers
+for x in russell2000_tickers:
+    if x[0] not in sp500_set:
+        all_tickers.append(x)
+
+owned_tickers = {
+    }
 
 # Calculate the start date (400 weeks ago) and end date (current date)
 end_date = datetime.today()
@@ -47,11 +63,13 @@ def load_data(tickers):
         print(f"Found data for {len(histories.columns.levels[1])} tickers in {DATA_FILE}")
         missing_tickers = [ticker for ticker in tickers if ticker not in histories.columns.levels[1]]
         if len(missing_tickers) == 0:
+            print("All tickers are already downloaded.")
             return histories
     else:
         histories = pd.DataFrame()
 
-    missing_tickers = missing_tickers if missing_tickers else tickers       
+    missing_tickers = missing_tickers if missing_tickers else tickers
+    print(f"Downloading {len(missing_tickers)} stocks...")       
     stocks = yf.Tickers(" ".join(missing_tickers), session=session)
     new_histories = stocks.history(period="400wk", interval="1d")
     
@@ -69,42 +87,61 @@ def load_data(tickers):
 async def download_stock_data(tickers):
     results = {}
     total_tickers = len(tickers)
-    attempt = 0
-    wait_time = 0
-    while attempt < 5:
-        try:
-            histories = load_data(tickers)
+    histories = load_data(tickers)
 
-            histories.index = pd.to_datetime(histories.index)
-            histories = histories[(histories.index >= start_date) & (histories.index <= end_date)]
+    histories.index = pd.to_datetime(histories.index)
+    histories = histories[(histories.index >= start_date) & (histories.index <= end_date)]
 
-            for index, ticker in enumerate(tickers, start=1):
-                try:
-                    df_close = histories[CLOSE_COL][ticker]
-                    
-                    current_price = float(df_close.iloc[-1]) if not df_close.empty else None
-                    results[ticker] = {CLOSE_COL: df_close, CUR_PRICE: current_price}
+    # for index, ticker in enumerate(tickers, start=1):
+    #     try:
+    #         print(f"Downloaded {index}/{total_tickers}: {ticker}")
+    #         df_close = histories[CLOSE_COL][ticker]
+            
+    #         current_price = float(df_close.iloc[-1]) if not df_close.empty else None
+    #         results[ticker] = {CLOSE_COL: df_close, CUR_PRICE: current_price}
 
-                    # print(f"Downloaded {index}/{total_tickers}: {ticker}")
-                except Exception as e:
-                    print(f"Error processing data for {ticker}: {e}")
-                    results[ticker] = {CLOSE_COL: None, CUR_PRICE: None}
+    #     except Exception as e:
+    #         print(f"Error processing data for {ticker}: {e}")
+    #         results[ticker] = {CLOSE_COL: None, CUR_PRICE: None}
 
-            wait_time = 0  # Reset wait time on success
-            break
-        except Exception as e:
-            print(f"Error downloading data, attempt {attempt + 1}: {e}")
-            attempt += 1
-            wait_time = 2 ** attempt + random.uniform(0, 1)
-            print(f"Retrying in {wait_time:.2f} seconds...")
-            await asyncio.sleep(wait_time)
+    print(f"Returning data for {len(histories)} tickers.")
+    return histories
 
-    return results
+def should_print_results(ticker, recent_sma, current_price, sma_slope, slope_200_w) -> bool:
+    if ticker in owned_tickers:
+        return True
+    return recent_sma and recent_sma > current_price and sma_slope >= 0.1 and slope_200_w >= 0.1
+
+def get_url(ticker):
+    base_url = f"https://www.google.com/finance/quote/{ticker}:NYSE?window=5Y"
+    try:
+        response = requests.get(base_url)
+        if "We couldn't find any match for your search" in response.text:
+            base_url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
+    except requests.RequestException as e:
+        print(f"Error accessing URL for {ticker}: {e}")
+        base_url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
+
+    # Shorten the URL using an external service
+    try:
+        shortener_url = "https://tinyurl.com/api-create.php"
+        short_response = requests.get(shortener_url, params={"url": base_url})
+        if short_response.status_code == 200:
+            return short_response.text
+        else:
+            print(f"Error shortening URL for {ticker}: {short_response.status_code}")
+    except requests.RequestException as e:
+        print(f"Error with URL shortening service for {ticker}: {e}")
+
+    return base_url  # Fallback to the original URL if shortening fails
 
 # Function to process stock data and calculate SMA and its slope
-def process_stock_data(ticker, company_name, stock_data):
-    entry = stock_data.get(ticker, None)
-    if not entry or entry[CLOSE_COL] is None or entry[CUR_PRICE] is None:
+def process_stock_data(ticker, company_name, index, stock_data):
+    df_close = stock_data[CLOSE_COL][ticker]
+    current_price = float(df_close.iloc[-1]) if not df_close.empty else None
+    entry = {CLOSE_COL: df_close, CUR_PRICE: current_price}
+
+    if entry[CLOSE_COL] is None or entry[CUR_PRICE] is None:
         print(f"Skipping {ticker} due to missing data, try running again.")
         return None
     
@@ -148,24 +185,35 @@ def process_stock_data(ticker, company_name, stock_data):
             sma_slope = None
         
         # Store results only if the current price is below the 200-week SMA
-        if recent_sma and recent_sma > current_price and sma_slope >= 0.1 and slope_200_w >= 0.1:
-            url = f"https://www.google.com/finance/quote/{ticker}:NYSE?window=5Y"
+        if should_print_results(ticker, recent_sma, current_price, sma_slope, slope_200_w):
+            url = get_url(ticker)
+
+            # Fetch additional financial data (total equity and market cap)
             try:
-                response = requests.get(url)
-                if "We couldn't find any match for your search" in response.text:
-                    url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
-            except requests.RequestException as e:
-                print(f"Error accessing URL for {ticker}: {e}")
-                url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
+                stock_info = yf.Ticker(ticker).info
+                # print(f"Debugging Ticker.info for {ticker}:\n{json.dumps(stock_info, indent=4)}")  # Neatly formatted debug output
+                market_cap = stock_info.get("marketCap", 0) / 1e9
+                book_value = stock_info.get("bookValue", 0)
+                price_to_book = stock_info.get("priceToBook", 0)
+            except Exception as e:
+                print(f"Error fetching financial data for {ticker}: {e}")
+                market_cap = None
+                book_value = None
+                price_to_book = None
 
             return {
                 "Ticker": ticker,
                 "Company Name": company_name,
-                "Current Price": current_price,
-                "Most Recent 200-Week SMA": recent_sma,
+                "Index": index,
+                "Price": current_price,
+                "Book": book_value,
+                "Price/Book": price_to_book,
+                "Owned": ticker in owned_tickers,
+                "200-Week SMA": recent_sma,
                 "% Below SMA": percentage_below_sma,
                 "SMA Slope": sma_slope,
                 "Slope 200W": slope_200_w,
+                "MarketCap(B)": market_cap,
                 "url": url,
             }
     except Exception as e:
@@ -173,17 +221,21 @@ def process_stock_data(ticker, company_name, stock_data):
     return None
 
 async def main():
-    tickers = [ticker for ticker, _ in sp500_tickers]
+    # print(all_tickers)
+    # return
+    tickers = [ticker for ticker, _, _ in all_tickers]
     stock_data = await download_stock_data(tickers)
 
-    results = [process_stock_data(ticker, company_name, stock_data) for ticker, company_name in sp500_tickers]
+    results = [process_stock_data(ticker, company_name, index, stock_data) for ticker, company_name, index in all_tickers]
     results = [result for result in results if result]
 
     results_df = pd.DataFrame(results).sort_values(by="% Below SMA", ascending=False)
+    results_df = results_df.round(2)  # Round all values to 2 decimal places
     pd.set_option('display.max_rows', None)
+    pd.set_option('display.max_columns', None)  # Ensure all columns are displayed
     pd.set_option('display.max_colwidth', None)  # Show full content in columns
-    pd.set_option('display.width', 1500)
-    print(results_df)
+    pd.set_option('display.width', 2000)
+    print(results_df.to_string(index=False))  # Exclude the index column when printing
     
     # Overwrite the result file
     results_df.to_json(RESULT_FILE, orient='records', indent=4, mode='w')
