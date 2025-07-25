@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Price Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+        }
+        #selector-container {
+            width: 25%;
+        }
+        #graph-container {
+            width: 75%;
+        }
+        select {
+            width: 100%;
+            height: 400px;
+            padding: 8px;
+            font-size: 16px;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+        .toggle-container {
+            margin-top: 20px;
+        }
+        .button-container {
+            margin-top: 20px;
+        }
+        .grid-container {
+            margin-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+    </style>
+</head>
+<body>
+    <div id="selector-container">
+        <h1>Stock Selector</h1>
+        <label for="stock-select">Select Stocks:</label>
+        <select id="stock-select" multiple>
+            {% for stock in stocks %}
+            <option value="{{ stock.Ticker }}">{{ stock.Ticker }} - {{ stock["Company Name"] }}</option>
+            {% endfor %}
+        </select>
+        <div class="toggle-container">
+            <input type="checkbox" id="toggle-percentage" />
+            <label for="toggle-percentage">Show Percentage Above Lowest Price</label>
+        </div>
+        <div class="button-container">
+            <button id="select-highest-current">Select Top 10 Current Percentage</button>
+            <button id="select-highest-gain">Select Top 10 Highest Percentage Gain</button>
+        </div>
+        <div class="grid-container">
+            <h2>Selected Stocks</h2>
+            <table id="selected-stocks-grid">
+                <thead>
+                    <tr>
+                        <th>Ticker</th>
+                        <th>Company Name</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Rows will be dynamically populated -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div id="graph-container">
+        <h1>Stock Price Graph</h1>
+        <canvas id="stock-chart"></canvas>
+    </div>
+    <a href="/" style="display: block; margin-top: 20px;">Return to Home</a>
+
+    <script>
+        const stockData = {{ stocks | tojson }};
+        console.log("Stock Data:", stockData); // Log stock data for debugging
+
+        const ctx = document.getElementById('stock-chart').getContext('2d');
+        let chart;
+
+        function calculatePercentageAboveLowest(history) {
+            const validHistory = history.filter(entry => entry.price !== null && entry.price !== undefined);
+            if (validHistory.length === 0) {
+                console.warn("No valid history for percentage calculation:", history); // Log invalid history
+                return [];
+            }
+
+            const lowestPrice = Math.min(...validHistory.map(entry => entry.price));
+            return validHistory.map(entry => ({
+                x: entry.date,
+                y: ((entry.price - lowestPrice) / lowestPrice) * 100,
+                price: entry.price,
+                percentage: ((entry.price - lowestPrice) / lowestPrice) * 100
+            }));
+        }
+
+        function selectTopCurrentPercentage() {
+            const topStocks = stockData
+                .map(stock => {
+                    const currentPercentage = calculatePercentageAboveLowest(stock.history).slice(-1)[0]?.percentage || 0;
+                    return { ticker: stock.Ticker, percentage: currentPercentage };
+                })
+                .sort((a, b) => b.percentage - a.percentage)
+                .slice(0, 10)
+                .map(stock => stock.ticker);
+
+            const stockSelect = document.getElementById('stock-select');
+            Array.from(stockSelect.options).forEach(option => {
+                option.selected = topStocks.includes(option.value);
+            });
+
+            updateChart();
+        }
+
+        function selectTopHighestGain() {
+            const topStocks = stockData
+                .map(stock => {
+                    const maxPercentage = Math.max(...calculatePercentageAboveLowest(stock.history).map(entry => entry.percentage || 0));
+                    return { ticker: stock.Ticker, percentage: maxPercentage };
+                })
+                .sort((a, b) => b.percentage - a.percentage)
+                .slice(0, 10)
+                .map(stock => stock.ticker);
+
+            const stockSelect = document.getElementById('stock-select');
+            Array.from(stockSelect.options).forEach(option => {
+                option.selected = topStocks.includes(option.value);
+            });
+
+            updateChart();
+        }
+
+        function updateSelectedStocksGrid(selectedStocks) {
+            const gridBody = document.getElementById('selected-stocks-grid').querySelector('tbody');
+            gridBody.innerHTML = '';
+
+            const sortedStocks = selectedStocks
+                .map(stock => {
+                    const currentPercentage = calculatePercentageAboveLowest(stock.history).slice(-1)[0]?.percentage || 0;
+                    return { ...stock, currentPercentage };
+                })
+                .sort((a, b) => b.currentPercentage - a.currentPercentage);
+
+            sortedStocks.forEach(stock => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${stock.Ticker}</td>
+                    <td>${stock["Company Name"]}</td>
+                    <td>${stock.currentPercentage.toFixed(2)}%</td>
+                `;
+                gridBody.appendChild(row);
+            });
+        }
+
+        function updateChart() {
+            const selectedTickers = Array.from(document.getElementById('stock-select').selectedOptions).map(option => option.value);
+            const selectedStocks = stockData.filter(s => selectedTickers.includes(s.Ticker));
+            const showPercentage = document.getElementById('toggle-percentage').checked;
+
+            updateSelectedStocksGrid(selectedStocks);
+
+            if (selectedStocks.length > 0) {
+                const datasets = selectedStocks.map(stock => {
+                    const data = calculatePercentageAboveLowest(stock.history).map(entry => ({
+                        x: entry.x,
+                        y: showPercentage ? entry.percentage : entry.price,
+                        price: entry.price,
+                        percentage: entry.percentage,
+                        ticker: stock.Ticker,
+                        companyName: stock["Company Name"]
+                    }));
+
+                    return {
+                        label: `${stock.Ticker} - ${stock["Company Name"]}`,
+                        data: data,
+                        borderColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 1)`,
+                        backgroundColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 0.2)`,
+                        borderWidth: 2,
+                        fill: true,
+                    };
+                });
+
+                if (chart) {
+                    chart.destroy();
+                }
+
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        datasets: datasets
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top',
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function (context) {
+                                        const dataPoint = context.raw;
+                                        const ticker = `Ticker: ${dataPoint.ticker}`;
+                                        const companyName = `Company: ${dataPoint.companyName}`;
+                                        const price = `Price: $${dataPoint.price?.toFixed(2) || 'N/A'}`;
+                                        const percentage = `Percentage: ${dataPoint.percentage?.toFixed(2) || 'N/A'}%`;
+                                        return `${ticker}, ${companyName}, ${price}, ${percentage}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'day',
+                                    tooltipFormat: 'yyyy-MM-dd',
+                                    displayFormats: {
+                                        day: 'yyyy-MM-dd'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Date'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: showPercentage ? 'Percentage Above Lowest Price (%)' : 'Price'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        document.getElementById('stock-select').addEventListener('change', updateChart);
+        document.getElementById('toggle-percentage').addEventListener('change', updateChart);
+        document.getElementById('select-highest-current').addEventListener('click', selectTopCurrentPercentage);
+        document.getElementById('select-highest-gain').addEventListener('click', selectTopHighestGain);
+    </script>
+</body>
+</html>

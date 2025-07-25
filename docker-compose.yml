@@ -1,16 +1,4 @@
-version: '3.8'
-
 services:
-  aa_app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: aa_app
-    working_dir: /app
-    volumes:
-      - .:/app
-    command: python aa_app.py
-  
   
   yfinance_app:
     build:
@@ -26,12 +14,14 @@ services:
         limits:
           memory: 30G  # Increased memory limit to 30 Gigabytes
 
-  one_stock:
+  fastapi_app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: one_stock
+    container_name: fastapi_app
     working_dir: /app
     volumes:
       - .:/app
-    command: python one_stock.py
+    ports:
+      - "8000:8000"
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload

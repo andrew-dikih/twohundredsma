@@ -1,9 +1,12 @@
+fastapi
+uvicorn
+jinja2
 pandas
-yfinance
-numpy
+yfinance>=0.2.26  # Ensure yfinance is on the latest version
 requests
-lxml
+requests-cache
+requests-ratelimiter
+pyrate-limiter
+numpy
 aiohttp
-pyrate_limiter
-requests_cache
-requests_ratelimiter
+lxml

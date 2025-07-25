@@ -21,7 +21,7 @@ class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
     pass
 
 session = CachedLimiterSession(
-    limiter=Limiter(RequestRate(10, Duration.SECOND * 3)),  # Increased to 10 requests per 3 seconds
+    limiter=Limiter(RequestRate(2, Duration.SECOND * 5)),  # Increased to 10 requests per 3 seconds
     bucket_class=MemoryQueueBucket,
     backend=SQLiteCache("yfinance.cache"),
 )
@@ -43,7 +43,9 @@ for x in russell2000_tickers:
         all_tickers.append(x)
 
 owned_tickers = {
-    }
+    "AMD", "OXY", "SIRI", "CDW", "COP", "FDX", "MRK", "VRSN", "FANG", "FSLR", "HII", "LEN", "NUE", "PRU", "TSM", "TSLA", "META", "NVDA", "BRK-B",
+    "ACLS", "AMPH", "AMR", "ATKR", "CCS", "HOV", "ICFI", "PRU", "TDW", "TSM", "VAL", "ARCB", "BXC", "STNG", "ZEUS", "ARCB", "PCVX", "UNH", "IOSP", "LEN",
+    "MTRN", "NSSC", "VAL"}
 
 # Calculate the start date (400 weeks ago) and end date (current date)
 end_date = datetime.today()
@@ -54,12 +56,12 @@ RESULT_FILE = f"dat/results_{end_date.date()}.json"
 CLOSE_COL = "Close"
 CUR_PRICE = "current_price"
 
-def load_data(tickers):
+async def load_data(tickers):
     # Check if saved data exists and load it if not forcing refresh
     missing_tickers = []
     if os.path.exists(DATA_FILE):
         print("Loading cached stock data...")
-        histories = pd.read_pickle(DATA_FILE)
+        histories = await asyncio.to_thread(pd.read_pickle, DATA_FILE)
         print(f"Found data for {len(histories.columns.levels[1])} tickers in {DATA_FILE}")
         missing_tickers = [ticker for ticker in tickers if ticker not in histories.columns.levels[1]]
         if len(missing_tickers) == 0:
@@ -69,17 +71,17 @@ def load_data(tickers):
         histories = pd.DataFrame()
 
     missing_tickers = missing_tickers if missing_tickers else tickers
-    print(f"Downloading {len(missing_tickers)} stocks...")       
+    print(f"Downloading {len(missing_tickers)} stocks...")
     stocks = yf.Tickers(" ".join(missing_tickers), session=session)
-    new_histories = stocks.history(period="400wk", interval="1d")
-    
+    new_histories = await asyncio.to_thread(stocks.history, period="400wk", interval="1d")
+
     if not histories.empty:
         histories = pd.concat([histories, new_histories], axis=1)
     else:
         histories = new_histories
 
     # Save the downloaded data
-    histories.to_pickle(DATA_FILE)
+    await asyncio.to_thread(histories.to_pickle, DATA_FILE)
     print(f"Saved stock data to {DATA_FILE}")
 
     return histories
@@ -87,22 +89,10 @@ def load_data(tickers):
 async def download_stock_data(tickers):
     results = {}
     total_tickers = len(tickers)
-    histories = load_data(tickers)
+    histories = await load_data(tickers)
 
     histories.index = pd.to_datetime(histories.index)
     histories = histories[(histories.index >= start_date) & (histories.index <= end_date)]
-
-    # for index, ticker in enumerate(tickers, start=1):
-    #     try:
-    #         print(f"Downloaded {index}/{total_tickers}: {ticker}")
-    #         df_close = histories[CLOSE_COL][ticker]
-            
-    #         current_price = float(df_close.iloc[-1]) if not df_close.empty else None
-    #         results[ticker] = {CLOSE_COL: df_close, CUR_PRICE: current_price}
-
-    #     except Exception as e:
-    #         print(f"Error processing data for {ticker}: {e}")
-    #         results[ticker] = {CLOSE_COL: None, CUR_PRICE: None}
 
     print(f"Returning data for {len(histories)} tickers.")
     return histories
@@ -112,31 +102,21 @@ def should_print_results(ticker, recent_sma, current_price, sma_slope, slope_200
         return True
     return recent_sma and recent_sma > current_price and sma_slope >= 0.1 and slope_200_w >= 0.1
 
-def get_url(ticker):
+async def get_url(ticker):
     base_url = f"https://www.google.com/finance/quote/{ticker}:NYSE?window=5Y"
     try:
-        response = requests.get(base_url)
-        if "We couldn't find any match for your search" in response.text:
-            base_url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
-    except requests.RequestException as e:
+        async with session.get(base_url) as response:
+            text = await response.text()
+            if "We couldn't find any match for your search" in text:
+                base_url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
+    except Exception as e:
         print(f"Error accessing URL for {ticker}: {e}")
         base_url = f"https://www.google.com/finance/quote/{ticker}:NASDAQ?window=5Y"
 
-    # Shorten the URL using an external service
-    try:
-        shortener_url = "https://tinyurl.com/api-create.php"
-        short_response = requests.get(shortener_url, params={"url": base_url})
-        if short_response.status_code == 200:
-            return short_response.text
-        else:
-            print(f"Error shortening URL for {ticker}: {short_response.status_code}")
-    except requests.RequestException as e:
-        print(f"Error with URL shortening service for {ticker}: {e}")
-
-    return base_url  # Fallback to the original URL if shortening fails
+    return base_url  # Return the original URL
 
 # Function to process stock data and calculate SMA and its slope
-def process_stock_data(ticker, company_name, index, stock_data):
+async def process_stock_data(ticker, company_name, index, stock_data):
     df_close = stock_data[CLOSE_COL][ticker]
     current_price = float(df_close.iloc[-1]) if not df_close.empty else None
     entry = {CLOSE_COL: df_close, CUR_PRICE: current_price}
@@ -186,12 +166,13 @@ def process_stock_data(ticker, company_name, index, stock_data):
         
         # Store results only if the current price is below the 200-week SMA
         if should_print_results(ticker, recent_sma, current_price, sma_slope, slope_200_w):
-            url = get_url(ticker)
+            print(f"Processing {ticker}: Current Price: {current_price}, Recent SMA: {recent_sma}, ")
+            url = await get_url(ticker)
+            print(f"URL for {ticker}: {url}")
 
             # Fetch additional financial data (total equity and market cap)
             try:
-                stock_info = yf.Ticker(ticker).info
-                # print(f"Debugging Ticker.info for {ticker}:\n{json.dumps(stock_info, indent=4)}")  # Neatly formatted debug output
+                stock_info = await asyncio.to_thread(yf.Ticker(ticker).get_info)
                 market_cap = stock_info.get("marketCap", 0) / 1e9
                 book_value = stock_info.get("bookValue", 0)
                 price_to_book = stock_info.get("priceToBook", 0)
@@ -220,14 +201,34 @@ def process_stock_data(ticker, company_name, index, stock_data):
         print(f"Error processing {ticker}: {e}")
     return None
 
+async def process_batch(batch, stock_data, semaphore):
+    """Process a batch of tickers with a concurrency limit."""
+    async with semaphore:
+        tasks = [
+            process_stock_data(ticker, company_name, index, stock_data)
+            for ticker, company_name, index in batch
+        ]
+        return await asyncio.gather(*tasks)
+
 async def main():
-    # print(all_tickers)
-    # return
     tickers = [ticker for ticker, _, _ in all_tickers]
     stock_data = await download_stock_data(tickers)
 
-    results = [process_stock_data(ticker, company_name, index, stock_data) for ticker, company_name, index in all_tickers]
-    results = [result for result in results if result]
+    # Define batch size and concurrency limit
+    batch_size = 50  # Number of tickers per batch
+    max_concurrent_tasks = 10  # Maximum number of concurrent tasks
+    semaphore = asyncio.Semaphore(max_concurrent_tasks)
+
+    # Split tickers into batches
+    batches = [
+        all_tickers[i:i + batch_size]
+        for i in range(0, len(all_tickers), batch_size)
+    ]
+
+    results = []
+    for batch in batches:
+        batch_results = await process_batch(batch, stock_data, semaphore)
+        results.extend([result for result in batch_results if result])
 
     results_df = pd.DataFrame(results).sort_values(by="% Below SMA", ascending=False)
     results_df = results_df.round(2)  # Round all values to 2 decimal places

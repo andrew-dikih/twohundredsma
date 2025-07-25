@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ filename }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        a {
+            color: #007BFF;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .owned {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>{{ filename }}</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Ticker</th>
+                <th>Company Name (owned in bold)</th>
+                <th>Index</th>
+                <th>Price</th>
+                <th>Book</th>
+                <th>Price/Book</th>
+                <th>200-Week SMA</th>
+                <th>% Below SMA</th>
+                <th>SMA Slope</th>
+                <th>Slope 200W</th>
+                <th>MarketCap (B)</th>
+                <th>URL</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in data %}
+            <tr>
+                <td>{{ item.Ticker }}</td>
+                <td class="{{ 'owned' if item.Owned else '' }}">{{ item["Company Name"] }}</td>
+                <td>{{ item.Index }}</td>
+                <td>{{ item.Price }}</td>
+                <td>{{ item.Book }}</td>
+                <td>{{ item["Price/Book"] }}</td>
+                <td>{{ item["200-Week SMA"] }}</td>
+                <td>{{ item["% Below SMA"] }}</td>
+                <td>{{ item["SMA Slope"] }}</td>
+                <td>{{ item["Slope 200W"] }}</td>
+                <td>{{ item["MarketCap(B)"] }}</td>
+                <td><a href="{{ item.url }}" target="_blank">Link</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <a href="/" style="display: block; margin-top: 20px;">Return to Home</a>
+</body>
+</html>
