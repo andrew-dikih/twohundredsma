@@ -77,7 +77,8 @@
                     <tr>
                         <th>Ticker</th>
                         <th>Company Name</th>
-                        <th>Percentage</th>
+                        <th>Current Pct Gain</th>
+                        <th>Pct Below SMA</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -158,7 +159,8 @@
             const sortedStocks = selectedStocks
                 .map(stock => {
                     const currentPercentage = calculatePercentageAboveLowest(stock.history).slice(-1)[0]?.percentage || 0;
-                    return { ...stock, currentPercentage };
+                    const pctBelowSMA = stock.history.slice(-1)[0]?.pctBelowSMA || "N/A"; // Ensure Pct Below SMA is included
+                    return { ...stock, currentPercentage, pctBelowSMA };
                 })
                 .sort((a, b) => b.currentPercentage - a.currentPercentage);
 
@@ -168,6 +170,7 @@
                     <td>${stock.Ticker}</td>
                     <td>${stock["Company Name"]}</td>
                     <td>${stock.currentPercentage.toFixed(2)}%</td>
+                    <td>${typeof stock.pctBelowSMA === "number" ? stock.pctBelowSMA.toFixed(2) + "%" : stock.pctBelowSMA}</td>
                 `;
                 gridBody.appendChild(row);
             });
