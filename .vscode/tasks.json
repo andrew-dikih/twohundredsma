@@ -1,0 +1,12 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Start container and wait for debugpy",
+        "type": "shell",
+        "command": "${workspaceFolder}/start-and-wait.sh",
+        "problemMatcher": [],
+        "isBackground": false
+      }
+    ]
+  }

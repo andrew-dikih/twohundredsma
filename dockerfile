@@ -10,6 +10,9 @@ COPY requirements.txt .
 # Install any dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Use ptvsd or debugpy for debugging
+RUN pip install debugpy
+
 # Verify uvicorn installation
 RUN uvicorn --version || echo "Uvicorn installation failed"
 

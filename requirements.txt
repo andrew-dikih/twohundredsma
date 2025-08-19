@@ -3,10 +3,7 @@ uvicorn
 jinja2
 pandas
 yfinance>=0.2.26  # Ensure yfinance is on the latest version
-requests
-requests-cache
-requests-ratelimiter
-pyrate-limiter
 numpy
 aiohttp
 lxml
+debugpy

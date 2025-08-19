@@ -8,10 +8,13 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+    ports:
+      - "5678:5678"  # Debugger port
     command: python yfinance_app.py
     deploy:
       resources:
         limits:
+          cpus: '8.0'      # max CPU
           memory: 30G  # Increased memory limit to 30 Gigabytes
 
   fastapi_app:
