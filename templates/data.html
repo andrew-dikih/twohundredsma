@@ -38,10 +38,26 @@
         .owned {
             font-weight: bold;
         }
+        /* Sticky header/table wrapper */
+        .table-wrapper {
+            max-height: 70vh; /* allow the table to take up to 70% of viewport height */
+            overflow: auto;
+            border: 1px solid #ddd;
+        }
+        thead th {
+            position: sticky;
+            top: 0;
+            background-color: #f4f4f4;
+            z-index: 2;
+        }
     </style>
 </head>
 <body>
-    <h1>{{ filename }}</h1>
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+        <h1>{{ filename }}</h1>
+        <a href="/" style="text-decoration:none;">Return to Home</a>
+    </div>
+    <div class="table-wrapper">
     <table>
         <thead>
             <tr>
@@ -56,6 +72,9 @@
                 <th>SMA Slope</th>
                 <th>Slope 200W</th>
                 <th>MarketCap (B)</th>
+                        <th>Dividend (12M)</th>
+                        <th>Dividend Yield %</th>
+                        <th>Dividend Yield Source</th>
                 <th>URL</th>
             </tr>
         </thead>
@@ -73,11 +92,15 @@
                 <td>{{ item["SMA Slope"] }}</td>
                 <td>{{ item["Slope 200W"] }}</td>
                 <td>{{ item["MarketCap(B)"] }}</td>
+                    <td>{{ item["Dividend (12M)"] }}</td>
+                    <td>{{ item["Dividend Yield %"] }}</td>
+                    <td>{{ item["Dividend Yield Source"] }}</td>
                 <td><a href="{{ item.url }}" target="_blank">Link</a></td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-    <a href="/" style="display: block; margin-top: 20px;">Return to Home</a>
+    </div>
+    
 </body>
 </html>

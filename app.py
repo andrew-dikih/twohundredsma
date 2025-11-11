@@ -60,7 +60,10 @@ async def graph(request: Request):
         grouped_stocks[ticker]["history"].append({
             "date": stock["date"],
             "price": stock.get("Price"),  # Use .get() to handle missing keys
-            "pctBelowSMA": stock.get("% Below SMA")  # Include Pct Below SMA
+            "pctBelowSMA": stock.get("% Below SMA"),  # Include Pct Below SMA
+            "dividend_12m": stock.get("Dividend (12M)"),
+            "dividend_yield_pct": stock.get("Dividend Yield %"),
+            "dividend_yield_source": stock.get("Dividend Yield Source")
         })
 
     # Ensure distinct and alphabetized tickers

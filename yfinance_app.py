@@ -1,4 +1,5 @@
 import pandas as pd
+import requests
 import asyncio
 from datetime import datetime, timedelta
 import yfinance as yf
@@ -14,7 +15,26 @@ from russell_2000 import russell2000_data
 # debugpy.wait_for_client()  # Optional: pause until debugger attaches
 
 # Load the list of S&P 500 tickers and company names
-sp500_data = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+# Some environments (containers, servers) block urllib without a User-Agent and return 403.
+# Try requests with a browser User-Agent first, then fall back to pandas' direct read_html.
+try:
+    resp = requests.get(
+        'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies',
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36'
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    sp500_data = pd.read_html(resp.text)[0]
+except Exception as e:
+    print(f"Warning fetching S&P500 list via requests: {e}. Trying pandas.read_html fallback...")
+    try:
+        sp500_data = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+    except Exception as e2:
+        print(f"Failed to fetch S&P500 list: {e2}. Continuing with empty list.")
+        sp500_data = pd.DataFrame(columns=['Symbol', 'Security'])
+
 sp500_tickers = [(symbol.replace('.', '-'), name, 'S&P') for symbol, name in sp500_data[['Symbol', 'Security']].values.tolist()]
 sp500_set = {symbol for symbol, _, _ in sp500_tickers}
 
@@ -31,7 +51,7 @@ for x in russell2000_tickers:
 owned_tickers = {
     "AMD", "OXY", "SIRI", "CDW", "COP", "FDX", "MRK", "VRSN", "FANG", "FSLR", "HII", "LEN", "NUE", "PRU", "TSM", "TSLA", "META", "NVDA", "BRK-B",
     "ACLS", "AMPH", "AMR", "ATKR", "CCS", "HOV", "ICFI", "PRU", "TDW", "TSM", "VAL", "ARCB", "BXC", "STNG", "ZEUS", "ARCB", "PCVX", "UNH", "IOSP", "LEN",
-    "MTRN", "NSSC", "VAL", "TSM", "MOH"}
+    "MTRN", "NSSC", "VAL", "TSM", "MOH", "UPS", "NEGG", "SLVM", "KO", "AMCR", "BEN", "O", "LYB", "MO", "UVV", "CVX", "VZ", "PFE", "TGT"}
 
 # Calculate the start date (400 weeks ago) and end date (current date)
 end_date = datetime.today()
@@ -196,6 +216,58 @@ async def process_stock_data(ticker, company_name, index, stock_data):
 
             # Fetch additional financial data with retry logic
             market_cap, book_value, price_to_book = await fetch_financial_data_with_retry(ticker)
+            # Calculate dividend metrics from cached history if available
+            div_col = f'Dividends__{ticker}'
+            trailing_12m_dividend = 0.0
+            dividend_yield_pct = None
+            try:
+                if div_col in stock_data.columns:
+                    df_div = stock_data[div_col].dropna()
+                    if not df_div.empty:
+                        df_div.index = pd.to_datetime(df_div.index)
+                        last_date = df_div.index.max()
+                        period_start = last_date - pd.Timedelta(days=365)
+                        trailing_12m_dividend = float(df_div[df_div.index > period_start].sum())
+                # Fallback: if no dividends in history, try to read dividendYield from yf info
+                if trailing_12m_dividend == 0.0:
+                    # get_info may contain 'dividendYield' as a decimal (e.g. 0.023) or as a percent (e.g. 2.3).
+                    try:
+                        info = await asyncio.to_thread(yf.Ticker(ticker).get_info)
+                        div_yield_info = info.get('dividendYield')
+                        if div_yield_info is not None:
+                            try:
+                                val = float(div_yield_info)
+                                # Normalize dividendYield into a percentage value (e.g. 0.007 -> 0.7, 0.7 -> 0.7, 70 -> 0.7)
+                                # Heuristics:
+                                # - If val < 0.1, treat as decimal fraction and multiply by 100 (0.007 -> 0.7)
+                                # - If val > 10, treat as scaled/integer and divide by 100 (70 -> 0.7)
+                                # - Otherwise assume val already represents percent-like value (0.7 -> 0.7, 2.5 -> 2.5)
+                                if 0 < val < 0.1:
+                                    dividend_yield_pct = val * 100
+                                elif val > 10:
+                                    dividend_yield_pct = val / 100
+                                else:
+                                    dividend_yield_pct = val
+                            except Exception:
+                                dividend_yield_pct = None
+                    except Exception:
+                        dividend_yield_pct = None
+
+                # Track source of dividend yield
+                dividend_yield_source = None
+
+                # If we have trailing dividend and a price, compute yield (prefer calculated)
+                if trailing_12m_dividend and current_price:
+                    dividend_yield_pct = (trailing_12m_dividend / current_price) * 100
+                    dividend_yield_source = 'calculated'
+                else:
+                    # If we obtained dividend_yield_pct from info earlier, mark source
+                    if dividend_yield_pct is not None:
+                        dividend_yield_source = 'info'
+                    else:
+                        dividend_yield_source = 'none'
+            except Exception as e:
+                print(f"Warning computing dividends for {ticker}: {e}")
 
             return {
                 "Ticker": ticker,
@@ -211,6 +283,9 @@ async def process_stock_data(ticker, company_name, index, stock_data):
                 "Slope 200W": slope_200_w,
                 "MarketCap(B)": market_cap,
                 "url": url,
+                "Dividend (12M)": round(trailing_12m_dividend, 4) if trailing_12m_dividend is not None else None,
+                "Dividend Yield %": round(dividend_yield_pct, 2) if dividend_yield_pct is not None else None,
+                "Dividend Yield Source": dividend_yield_source,
                 "Consider": True,
             }
     except Exception as e:

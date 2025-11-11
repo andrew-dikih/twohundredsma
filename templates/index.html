@@ -26,13 +26,16 @@
     </style>
 </head>
 <body>
-    <h1>Available JSON Files</h1>
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+        <h1>Available JSON Files</h1>
+        <a href="/" style="text-decoration:none;">Return to Home</a>
+    </div>
     <a href="/graph">Go to Stock Price Graph</a>
     <ul>
         {% for file in files %}
         <li><a href="/data/{{ file }}">{{ file }}</a></li>
         {% endfor %}
     </ul>
-    <a href="/" style="display: block; margin-top: 20px;">Return to Home</a>
+    
 </body>
 </html>

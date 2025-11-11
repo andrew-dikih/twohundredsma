@@ -66,6 +66,10 @@
             <input type="checkbox" id="toggle-percentage" />
             <label for="toggle-percentage">Show Percentage Above Lowest Price</label>
         </div>
+        <div class="toggle-container">
+            <input type="checkbox" id="toggle-dividends" />
+            <label for="toggle-dividends">Show Dividend Stats</label>
+        </div>
         <div class="button-container">
             <button id="select-highest-current">Select Top 10 Current Percentage</button>
             <button id="select-highest-gain">Select Top 10 Highest Percentage Gain</button>
@@ -79,6 +83,9 @@
                         <th>Company Name</th>
                         <th>Current Pct Gain</th>
                         <th>Pct Below SMA</th>
+                        <th>Dividend (12M)</th>
+                        <th>Dividend Yield %</th>
+                        <th>Yield Source</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -112,7 +119,9 @@
                 x: entry.date,
                 y: ((entry.price - lowestPrice) / lowestPrice) * 100,
                 price: entry.price,
-                percentage: ((entry.price - lowestPrice) / lowestPrice) * 100
+                percentage: ((entry.price - lowestPrice) / lowestPrice) * 100,
+                dividend_12m: entry.dividend_12m ?? null,
+                dividend_yield_pct: entry.dividend_yield_pct ?? null
             }));
         }
 
@@ -160,7 +169,7 @@
                 .map(stock => {
                     const currentPercentage = calculatePercentageAboveLowest(stock.history).slice(-1)[0]?.percentage || 0;
                     const pctBelowSMA = stock.history.slice(-1)[0]?.pctBelowSMA || "N/A"; // Ensure Pct Below SMA is included
-                    return { ...stock, currentPercentage, pctBelowSMA };
+                    return { ...stock, currentPercentage, pctBelowSMA, dividend_12m: stock.history.slice(-1)[0]?.dividend_12m, dividend_yield_pct: stock.history.slice(-1)[0]?.dividend_yield_pct };
                 })
                 .sort((a, b) => b.currentPercentage - a.currentPercentage);
 
@@ -171,6 +180,9 @@
                     <td>${stock["Company Name"]}</td>
                     <td>${stock.currentPercentage.toFixed(2)}%</td>
                     <td>${typeof stock.pctBelowSMA === "number" ? stock.pctBelowSMA.toFixed(2) + "%" : stock.pctBelowSMA}</td>
+                    <td>${stock.dividend_12m != null ? stock.dividend_12m : 'N/A'}</td>
+                    <td>${stock.dividend_yield_pct != null ? (typeof stock.dividend_yield_pct === 'number' ? stock.dividend_yield_pct.toFixed(2) + '%' : stock.dividend_yield_pct) : 'N/A'}</td>
+                    <td>${stock.history.slice(-1)[0]?.dividend_yield_source || 'N/A'}</td>
                 `;
                 gridBody.appendChild(row);
             });
@@ -180,6 +192,7 @@
             const selectedTickers = Array.from(document.getElementById('stock-select').selectedOptions).map(option => option.value);
             const selectedStocks = stockData.filter(s => selectedTickers.includes(s.Ticker));
             const showPercentage = document.getElementById('toggle-percentage').checked;
+            const showDividends = document.getElementById('toggle-dividends').checked;
 
             updateSelectedStocksGrid(selectedStocks);
 
@@ -187,9 +200,11 @@
                 const datasets = selectedStocks.map(stock => {
                     const data = calculatePercentageAboveLowest(stock.history).map(entry => ({
                         x: entry.x,
-                        y: showPercentage ? entry.percentage : entry.price,
+                        y: showDividends ? entry.dividend_yield_pct : (showPercentage ? entry.percentage : entry.price),
                         price: entry.price,
                         percentage: entry.percentage,
+                        dividend_yield_pct: entry.dividend_yield_pct,
+                        dividend_12m: entry.dividend_12m,
                         ticker: stock.Ticker,
                         companyName: stock["Company Name"]
                     }));
@@ -213,7 +228,7 @@
                     data: {
                         datasets: datasets
                     },
-                    options: {
+                        options: {
                         responsive: true,
                         plugins: {
                             legend: {
@@ -226,6 +241,12 @@
                                         const dataPoint = context.raw;
                                         const ticker = `Ticker: ${dataPoint.ticker}`;
                                         const companyName = `Company: ${dataPoint.companyName}`;
+                                        const showDividendsLocal = document.getElementById('toggle-dividends').checked;
+                                        if (showDividendsLocal) {
+                                            const yieldVal = dataPoint.dividend_yield_pct != null ? (typeof dataPoint.dividend_yield_pct === 'number' ? dataPoint.dividend_yield_pct.toFixed(2) + '%' : dataPoint.dividend_yield_pct) : 'N/A';
+                                            const div12 = dataPoint.dividend_12m != null ? dataPoint.dividend_12m : 'N/A';
+                                            return `${ticker}, ${companyName}, Dividend Yield: ${yieldVal}, Dividend(12M): ${div12}`;
+                                        }
                                         const price = `Price: $${dataPoint.price?.toFixed(2) || 'N/A'}`;
                                         const percentage = `Percentage: ${dataPoint.percentage?.toFixed(2) || 'N/A'}%`;
                                         return `${ticker}, ${companyName}, ${price}, ${percentage}`;
@@ -251,7 +272,7 @@
                             y: {
                                 title: {
                                     display: true,
-                                    text: showPercentage ? 'Percentage Above Lowest Price (%)' : 'Price'
+                                    text: showDividends ? 'Dividend Yield (%)' : (showPercentage ? 'Percentage Above Lowest Price (%)' : 'Price')
                                 }
                             }
                         }
@@ -262,6 +283,8 @@
 
         document.getElementById('stock-select').addEventListener('change', updateChart);
         document.getElementById('toggle-percentage').addEventListener('change', updateChart);
+    // Ensure dividends checkbox triggers chart update
+    document.getElementById('toggle-dividends').addEventListener('change', updateChart);
         document.getElementById('select-highest-current').addEventListener('click', selectTopCurrentPercentage);
         document.getElementById('select-highest-gain').addEventListener('click', selectTopHighestGain);
     </script>
