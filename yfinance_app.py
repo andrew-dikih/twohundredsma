@@ -8,34 +8,14 @@ import os
 import aiohttp  # Import aiohttp for asynchronous HTTP requests
 
 from russell_2000 import russell2000_data
+from sp500 import sp500_data
 
 # import debugpy
 # debugpy.listen(("0.0.0.0", 5678))  # 5678 is the debug port
 # print("Waiting for debugger attach...")
 # debugpy.wait_for_client()  # Optional: pause until debugger attaches
 
-# Load the list of S&P 500 tickers and company names
-# Some environments (containers, servers) block urllib without a User-Agent and return 403.
-# Try requests with a browser User-Agent first, then fall back to pandas' direct read_html.
-try:
-    resp = requests.get(
-        'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies',
-        headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0 Safari/537.36'
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    sp500_data = pd.read_html(resp.text)[0]
-except Exception as e:
-    print(f"Warning fetching S&P500 list via requests: {e}. Trying pandas.read_html fallback...")
-    try:
-        sp500_data = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
-    except Exception as e2:
-        print(f"Failed to fetch S&P500 list: {e2}. Continuing with empty list.")
-        sp500_data = pd.DataFrame(columns=['Symbol', 'Security'])
-
-sp500_tickers = [(symbol.replace('.', '-'), name, 'S&P') for symbol, name in sp500_data[['Symbol', 'Security']].values.tolist()]
+sp500_tickers = [(symbol.replace('.', '-'), name, 'S&P') for symbol, name in sp500_data]
 sp500_set = {symbol for symbol, _, _ in sp500_tickers}
 
 # Load the list of Russell 2000 tickers and company names
