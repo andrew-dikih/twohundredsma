@@ -17,6 +17,21 @@ services:
           cpus: '8.0'      # max CPU
           memory: 30G  # Increased memory limit to 30 Gigabytes
 
+  sliding_window_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sliding_window
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: python sliding_window.py
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'      # max CPU
+          memory: 30G  # Increased memory limit to 30 Gigabytes
+
   fastapi_app:
     build:
       context: .
