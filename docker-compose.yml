@@ -42,4 +42,9 @@ services:
       - .:/app
     ports:
       - "8000:8000"
+    environment:
+      # Set this to the connection string from `terraform output -raw application_insights_connection_string`
+      # or from the Azure Portal > Application Insights > Overview > Connection String.
+      # Leave unset (or empty) to run without Application Insights telemetry.
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
     command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload

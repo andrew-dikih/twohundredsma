@@ -5,6 +5,13 @@ from starlette.requests import Request
 import os
 import json
 
+# Configure Azure Monitor (Application Insights) telemetry when the
+# connection string is present.  The SDK automatically instruments
+# FastAPI requests, exceptions, dependencies, and stdout/stderr logs.
+if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    from azure.monitor.opentelemetry import configure_azure_monitor
+    configure_azure_monitor()
+
 app = FastAPI()
 
 # Directory containing JSON files

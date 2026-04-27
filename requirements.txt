@@ -8,3 +8,4 @@ aiohttp
 lxml
 debugpy
 requests
+azure-monitor-opentelemetry==1.8.7
