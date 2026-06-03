@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Register · Portfolio Advisor{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h4 mb-3">Create an account</h2>
+        {% if error %}
+        <div class="alert alert-danger py-2 small">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="/register">
+          <div class="mb-3">
+            <label class="form-label small">Username</label>
+            <input type="text" name="username" class="form-control" required autofocus
+                   pattern="^[A-Za-z0-9_.\-]+$" minlength="2" maxlength="40">
+            <div class="form-text">Letters, digits, dot, dash, underscore. Case-insensitive.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Password</label>
+            <input type="password" name="password" class="form-control" required minlength="8">
+            <div class="form-text">Min 8 characters.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Confirm password</label>
+            <input type="password" name="password2" class="form-control" required minlength="8">
+          </div>
+          <button type="submit" class="btn btn-primary">Create account</button>
+          <a href="/login" class="btn btn-link">Already have an account?</a>
+        </form>
+        <p class="text-muted small mt-3 mb-0">
+          New accounts are <strong>regular users</strong> by default. Regular users
+          can run the advisor unlimited times but receive AI analysis on at most
+          one run per day. Admin users receive unlimited AI analysis.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

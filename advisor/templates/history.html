@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="h4">Run history</h2>
+{% if not runs %}<p class="text-muted">No runs yet.</p>{% endif %}
+<table class="table bg-white">
+  <thead><tr>
+    <th>Date</th><th>asof</th><th>Type</th><th class="text-end">Value</th>
+    <th class="text-end">Gain $</th><th class="text-end">Gain %</th>
+    <th>Stocks/BND</th><th>Orders</th><th>AI</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in runs %}
+    {% set cb = r.cost_basis %}
+    {% set invested = (r.portfolio_value or 0) - (r.cash or 0) %}
+    {% set gain = (invested - cb) if cb else None %}
+    {% set gain_pct = (gain / cb * 100) if (cb and cb > 0) else None %}
+    <tr>
+      <td class="mono small">{{ r.run_ts[:19] }}</td>
+      <td class="mono small">{{ r.asof_date }}</td>
+      <td>{{ r.run_type }}</td>
+      <td class="text-end mono">${{ "{:,.0f}".format(r.portfolio_value) }}</td>
+      <td class="text-end mono {% if gain is not none %}{{ 'order-buy' if gain >= 0 else 'order-sell' }}{% endif %}">
+        {% if gain is not none %}{{ '+' if gain >= 0 else '' }}${{ "{:,.0f}".format(gain) }}{% else %}—{% endif %}
+      </td>
+      <td class="text-end mono {% if gain_pct is not none %}{{ 'order-buy' if gain_pct >= 0 else 'order-sell' }}{% endif %}">
+        {% if gain_pct is not none %}{{ '+' if gain_pct >= 0 else '' }}{{ "%.1f"|format(gain_pct) }}%{% else %}—{% endif %}
+      </td>
+      <td class="small">{{ "%.0f"|format(r.stocks_pct*100) }}% / {{ "%.0f"|format(r.bnd_pct*100) }}%</td>
+      <td>{{ r.orders|length }}</td>
+      <td>
+        {% if r.ai_status == 'full' %}✅
+        {% elif r.ai_status == 'partial' %}⚠️
+        {% elif r.ai_status == 'failed' %}🚫
+        {% else %}❌{% endif %}
+      </td>
+      <td>
+        <a class="btn btn-sm btn-outline-secondary" href="/runs/{{ r.id }}">view</a>
+        <form method="post" action="/runs/{{ r.id }}/delete" class="d-inline" onsubmit="return confirm('Delete run #{{ r.id }}? This cannot be undone.');">
+          <button type="submit" class="btn btn-sm btn-outline-danger">delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

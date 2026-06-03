@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="h4">About this strategy</h2>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Executive summary (plain English)</h3>
+  <p>
+    This advisor implements the <code>{{ strategy.short_label }}</code> champion strategy — the IRR leader from a
+    7,200-variation backtest across 18-year, 13-year, and 8-year windows. In simple terms:
+  </p>
+  <ul>
+    <li><strong>Own {{ strategy.n_holdings }} dividend-paying stocks</strong>, equal-weighted, picked by yield and
+      dividend consistency. Hold ~{{ strategy.stock_w_base_pct }}% of the IRA in those stocks, ~{{ strategy.bnd_floor_pct }}–{{ strategy.bnd_target_pct }}% in <code>BND</code> (US bond ETF) as ballast.</li>
+    <li><strong>Rebalance the full portfolio once a year, in {{ strategy.rebal_month_name }}.</strong> That's when the
+      score gets recomputed, losers get cut, winners get topped up. Annual cadence beat quarterly
+      and monthly in 92% of robust runs — friction matters.</li>
+    <li><strong>Add new IRA money every quarter</strong> ($1,750 in Jan / Apr / Jul / Oct). Cash
+      goes to whichever holdings are most underweight relative to the target.</li>
+    <li><strong>Buy the dip when SPY corrects.</strong> {{ strategy.dip_tier_desc }}.
+      <em>Deploy mode: <code>{{ strategy.dip_deploy }}</code>.</em>
+      {{ strategy.dip_deploy_desc }}
+      This is the only mid-year trading the strategy does.</li>
+    <li><strong>Snap back if stocks balloon.</strong> If stock allocation creeps above {{ strategy.snapback_pct }}%
+      (e.g., after a rally), trim back to {{ strategy.stock_w_base_pct }}% and rebuild the BND ballast.</li>
+    <li><strong>Bias toward holding.</strong> Existing positions stay if they're still in the
+      top {{ strategy.keep_threshold }} by score, even when not in the top {{ strategy.n_holdings }} — that minimizes turnover and tax drag.</li>
+  </ul>
+  <p class="mb-0">
+    Backtested CAGR: <strong>~30% / yr over 18 years</strong> with a max drawdown of about –28%,
+    versus the SSO/BND benchmark at ~20% IRR with a –42% drawdown.
+    See the <a href="/benchmark">Benchmark</a> page for live, apples-to-apples comparison once
+    you have a few months of run history.
+  </p>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Eligibility filter (universe screen)</h3>
+  <p class="small text-muted mb-2">Applied to every ticker, every month, before scoring.</p>
+  <ol>
+    <li><strong>5+ years of price history</strong> in the local dataset.</li>
+    <li><strong>Dividend payer</strong> — paid a dividend in <strong>12+ of the last 60 months</strong>.</li>
+    <li><strong>Not a yield trap</strong> — trailing 12-month yield must be below the cap (default 99%,
+      effectively unlimited; the sector cap and snap-back rules handle this in practice).</li>
+  </ol>
+  <p class="small text-muted mb-0">
+    (The full original strategy doc also describes a fundamentals overlay — P/B &lt; 5, P/E &lt; 30,
+    market cap ≥ $1B, beta &lt; 1.5 — used for <em>current</em> stock selection. The historical backtests
+    rely only on price + dividend signals because point-in-time fundamentals aren't available on the
+    free yfinance tier. The advisor engine in this app uses the backtest-validated price+dividend filter.)
+  </p>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Score — <code>{{ strategy.short_label }}</code></h3>
+  <p>Each eligible stock gets a score combining three z-scored signals (computed cross-sectionally each month):</p>
+  <pre class="bg-light p-2 small mb-2"><code>{{ strategy.score_formula }}</code></pre>
+  <p class="small text-muted mb-0">
+    The top {{ strategy.n_holdings }} by score, subject to sector limits, become the target portfolio.
+    A <code>qual_value</code> variant exists in the codebase (smoother ride, lower CAGR) but the deployed
+    advisor uses <code>{{ strategy.short_label }}</code> — the champion by IRR.
+  </p>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Portfolio construction</h3>
+  <ul>
+    <li><strong>N = {{ strategy.n_holdings }} holdings</strong>, equal-weighted (each ~{{ "%.2f"|format(strategy.stock_w_base_pct / strategy.n_holdings) }}% of the portfolio after stock/bond split).</li>
+    <li><strong>Sector cap = {{ strategy.sector_cap_pct }}%</strong> ({{ strategy.sector_cap_mode }}-weighted) — at most {{ strategy.max_per_sector_count }} of the {{ strategy.n_holdings }} names can be in the same sector at rebalance.</li>
+    <li><strong>Minimum {{ strategy.min_sectors }} sectors</strong> represented across the portfolio.</li>
+    <li><strong>Target allocation: {{ strategy.stock_w_base_pct }}% stocks / {{ strategy.bnd_floor_pct }}% BND minimum / {{ strategy.bnd_target_pct - strategy.bnd_floor_pct }}% buffer</strong> (the buffer
+      is what funds dip-buys).</li>
+    <li><strong>Hold-bias = {{ strategy.hold_bias }}</strong> — an existing holding stays in the portfolio if its rank
+      is still ≤ {{ strategy.keep_threshold }} (= N / hold_bias).</li>
+  </ul>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Cadence — what happens each month</h3>
+  <ol>
+    <li><strong>Snapshot prices</strong> for the universe + your current holdings + SPY + BND.</li>
+    <li><strong>Update the SPY rolling peak</strong>. Compute current drawdown vs that peak.</li>
+    <li><strong>Check dip-buy thresholds</strong>:
+      <ul>
+        {% for thresh, frac in strategy.dip_tier %}
+          {% set pct = (thresh * 100)|int %}
+          {% if frac == 1.0 %}{% set fdesc = 'all' %}
+          {% elif frac == 0.5 %}{% set fdesc = '1/2' %}
+          {% elif (frac - (1.0/3.0))|abs < 0.02 %}{% set fdesc = '1/3' %}
+          {% else %}{% set fdesc = '%.2f'|format(frac) %}{% endif %}
+        <li>SPY ≤ {{ pct }}%  → sell <strong>{{ fdesc }} of BND</strong>{% if loop.first %}, deploy via <code>{{ strategy.dip_deploy }}</code> mode{% endif %}.</li>
+        {% endfor %}
+      </ul>
+      Each threshold fires once per "leg" — the engine moves the larger of the triggered fractions.
+      <br><span class="text-muted small">Deploy: {{ strategy.dip_deploy_desc }}</span>
+    </li>
+    <li><strong>Snap-back check</strong>: if stock allocation &gt; {{ strategy.snapback_pct }}%, trim winners proportionally
+      back to {{ strategy.stock_w_base_pct }}% and refill BND to its {{ strategy.bnd_floor_pct }}% floor.</li>
+    <li><strong>Contribution check</strong>: in Jan / Apr / Jul / Oct, deposit $1,750 into cash and
+      deploy toward the most-underweight target holdings (BND topped up first if below floor).</li>
+    <li><strong>Annual rebalance</strong>: only in <strong>{{ strategy.rebal_month_name }}</strong>. Re-score the
+      universe, apply the hold-bias keep-list, fill remaining slots with new top picks (respecting
+      sector cap and minimum sectors), then size everything to equal weight at {{ strategy.stock_w_base_pct }}% stocks / {{ strategy.bnd_target_pct }}% BND.</li>
+    <li><strong>Otherwise: hold.</strong> No trades the rest of the year unless a dip threshold
+      fires or a contribution lands.</li>
+  </ol>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Sell rules</h3>
+  <p>A current holding is sold when any of these fire:</p>
+  <ol>
+    <li><strong>Rank fail</strong> at the annual rebalance: score rank &gt; {{ strategy.keep_threshold }} (i.e., out of the hold-bias keep zone).</li>
+    <li><strong>Sector overflow</strong>: sector is over the {{ strategy.sector_cap_pct }}% cap AND this is the lowest-scored holding in that sector.</li>
+    <li><strong>Dividend cut</strong>: stock no longer passes the dividend-consistency filter
+      (&lt;12 dividends in last 60 months).</li>
+    <li><strong>Snap-back trim</strong>: stock allocation &gt; {{ strategy.snapback_pct }}% triggers proportional trim of all
+      holdings back to {{ strategy.stock_w_base_pct }}%, rebuilding BND.</li>
+    <li><strong>Reallocation</strong> at annual rebalance to bring overweight holdings back to equal weight.</li>
+  </ol>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Cash &amp; sleeve management</h3>
+  <ul>
+    <li><strong>Dividends</strong> pool to cash — they are <em>not</em> auto-reinvested in the
+      paying ticker. Cash is deployed at the next rebalance, dip, or contribution event.</li>
+    <li><strong>IRA contributions</strong>: $1,750 per quarter = $7,000/year (current Roth IRA limit
+      assumption for one earner).</li>
+    <li><strong>BND floor</strong>: {{ strategy.bnd_floor_pct }}%. Topped up first whenever cash is deployed via contribution.</li>
+  </ul>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <h3 class="h5">Caveats (worth re-reading)</h3>
+  <ol>
+    <li><strong>Survivorship bias</strong>: the historical dataset only contains currently-listed
+      tickers. Backtested dollar figures are inflated; real-world returns will be lower. The
+      <em>ranking</em> of strategies vs. the SSO/BND benchmark is still informative.</li>
+    <li><strong>Fundamentals overlay is a current snapshot</strong>, not point-in-time historical
+      data. The advisor's stock filter relies on price + dividend signals only.</li>
+    <li><strong>Annual cadence is non-negotiable</strong>. Quarterly rebalancing consistently
+      underperformed in robust testing once friction was modeled. Resist the urge to fiddle.</li>
+    <li><strong>The dip-buy thresholds are crossings of rolling SPY peak</strong>, not absolute
+      drops — once a tier (e.g. {{ ((strategy.dip_tier[0][0]) * 100)|int }}%) fires, it won't fire again until SPY
+      makes a new peak and re-crosses that level.</li>
+    <li><strong>AI review (if enabled) is informational only.</strong> The orders the advisor
+      produces are deterministic; the AI overlay flags things to consider but does not change
+      the trade list.</li>
+  </ol>
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body small">
+  <h3 class="h6 text-muted">Engine parameters (live values from <code>advisor/engine.py</code> via <code>/api/strategy</code>)</h3>
+  <table class="table table-sm mb-0">
+    <tbody class="mono small">
+      <tr><td>n_holdings</td><td class="text-end">{{ strategy.n_holdings }}</td></tr>
+      <tr><td>stock_w_base</td><td class="text-end">{{ strategy.stock_w_base }}</td></tr>
+      <tr><td>bnd_floor</td><td class="text-end">{{ strategy.bnd_floor }}</td></tr>
+      <tr><td>sector_cap</td><td class="text-end">{{ strategy.sector_cap }} ({{ strategy.sector_cap_mode }}-weighted)</td></tr>
+      <tr><td>min_sectors</td><td class="text-end">{{ strategy.min_sectors }}</td></tr>
+      <tr><td>hold_bias</td><td class="text-end">{{ strategy.hold_bias }}</td></tr>
+      <tr><td>dip_tier</td><td class="text-end">{{ strategy.dip_tier }}</td></tr>
+      <tr><td>dip_deploy</td><td class="text-end">{{ strategy.dip_deploy }}{% if strategy.dip_deploy == 'hybrid_scout_eq' %} (scout_n={{ strategy.scout_n }}){% endif %}</td></tr>
+      <tr><td>snapback</td><td class="text-end">{{ strategy.snapback }} → trim back to {{ strategy.stock_w_base }}</td></tr>
+      <tr><td>rebal_month</td><td class="text-end">{{ strategy.rebal_month }} ({{ strategy.rebal_month_name }})</td></tr>
+      <tr><td>contribution_amount</td><td class="text-end">$1,750 / quarter</td></tr>
+      <tr><td>contribution_months</td><td class="text-end">Jan, Apr, Jul, Oct</td></tr>
+      <tr><td>score</td><td class="text-end">{{ strategy.score }} = {{ strategy.score_formula }}</td></tr>
+      <tr><td>filter</td><td class="text-end">{{ strategy.filter }}</td></tr>
+    </tbody>
+  </table>
+</div></div>
+
+{% endblock %}

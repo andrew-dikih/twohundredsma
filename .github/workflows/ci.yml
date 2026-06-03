@@ -1,0 +1,70 @@
+name: CI - Tests, lint & image build
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  python:
+    name: Python compile + tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Byte-compile every module
+        run: python -m compileall -q advisor scripts
+
+      - name: Import advisor.app (smoke)
+        env:
+          # Force SQLite path during CI so we don't need real Cosmos creds.
+          COSMOS_CONNECTION_STRING: ""
+        run: |
+          python - <<'PY'
+          import importlib
+          for mod in ["advisor.state", "advisor.auth", "advisor.app",
+                      "advisor.engine", "advisor.service",
+                      "advisor.store_cosmos"]:
+              importlib.import_module(mod)
+              print(f"ok: {mod}")
+          PY
+
+      - name: Unit + integration tests
+        env:
+          # Tests run against an isolated SQLite tmp DB per test (see conftest).
+          COSMOS_CONNECTION_STRING: ""
+        run: pytest tests/ -v --tb=short
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: dockerfile
+          push: false
+          load: true
+          tags: twohundredsma:ci
+

@@ -480,7 +480,7 @@ sp500_data = [
     ("WRB","W. R. Berkley Corporation"),
     ("GWW","W. W. Grainger"),
     ("WAB","Wabtec"),
-    ("WBA","Walgreens Boots Alliance"),
+    # ("WBA","Walgreens Boots Alliance"),
     ("WMT","Walmart"),
     ("DIS","Walt Disney Company (The)"),
     ("WBD","Warner Bros. Discovery"),

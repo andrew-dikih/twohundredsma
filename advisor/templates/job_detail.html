@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h2 class="h4">Advisor run #{{ job.id }}</h2>
+    <p class="text-muted small mb-0">
+      started <span class="mono">{{ job.started_at[:19] }}</span>
+      · account <strong>{{ current_account_label }}</strong>
+    </p>
+  </div>
+  <div>
+    <span id="job-status-badge" class="badge bg-secondary">{{ job.status }}</span>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between mb-1 small">
+      <span><strong id="job-step-name">{{ job.step_name or 'Queued' }}</strong>
+        (<span id="job-step-counter">{{ job.step_idx }}/{{ job.step_total }}</span>)</span>
+      <span class="mono"><span id="job-progress-pct">{{ "%.1f"|format(job.progress_pct) }}</span>%</span>
+    </div>
+    <div class="progress" style="height: 22px;">
+      <div id="job-progress-bar"
+           class="progress-bar progress-bar-striped progress-bar-animated"
+           role="progressbar"
+           style="width: {{ job.progress_pct }}%"
+           aria-valuenow="{{ job.progress_pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+    <p class="mt-2 mb-0 small text-muted" id="job-message">{{ job.message or '' }}</p>
+  </div>
+</div>
+
+<div id="job-failed-card" class="card border-danger mb-3" style="display:none;">
+  <div class="card-body">
+    <h3 class="h6 text-danger">Run failed</h3>
+    <pre class="small mb-0" id="job-error" style="white-space: pre-wrap;"></pre>
+    <a href="/upload" class="btn btn-sm btn-outline-primary mt-2">Upload portfolio again</a>
+  </div>
+</div>
+
+<div id="job-pushback-card" class="card border-warning mb-3" style="display:none;">
+  <div class="card-body">
+    <h3 class="h6">Cadence warning</h3>
+    <p class="small mb-2" id="job-pushback-reason"></p>
+    <a id="job-pushback-link" href="#" class="btn btn-sm btn-warning">Review cadence warning</a>
+  </div>
+</div>
+
+<p class="small text-muted">
+  This page updates in real-time via WebSocket (with HTTP-polling fallback). The run continues
+  in the background even if you close this tab — you can come back to <code>/jobs/{{ job.id }}</code>
+  any time, or find active jobs from the <a href="/">home page</a>.
+</p>
+
+<script>
+(function () {
+  const jobId = {{ job.id }};
+  const badge = document.getElementById('job-status-badge');
+  const bar = document.getElementById('job-progress-bar');
+  const pct = document.getElementById('job-progress-pct');
+  const stepName = document.getElementById('job-step-name');
+  const stepCounter = document.getElementById('job-step-counter');
+  const msg = document.getElementById('job-message');
+  const failedCard = document.getElementById('job-failed-card');
+  const errorPre = document.getElementById('job-error');
+  const pushbackCard = document.getElementById('job-pushback-card');
+  const pushbackReason = document.getElementById('job-pushback-reason');
+  const pushbackLink = document.getElementById('job-pushback-link');
+
+  const BADGE_CLASSES = {
+    queued: 'bg-secondary', running: 'bg-primary',
+    done: 'bg-success', failed: 'bg-danger', pushback: 'bg-warning text-dark',
+  };
+
+  function render(job) {
+    badge.className = 'badge ' + (BADGE_CLASSES[job.status] || 'bg-secondary');
+    badge.textContent = job.status;
+    const p = Number(job.progress_pct || 0);
+    bar.style.width = p + '%';
+    bar.setAttribute('aria-valuenow', p);
+    pct.textContent = p.toFixed(1);
+    stepName.textContent = job.step_name || '';
+    stepCounter.textContent = (job.step_idx || 0) + '/' + (job.step_total || 1);
+    msg.textContent = job.message || '';
+
+    if (job.status === 'done' && job.run_id) {
+      bar.classList.remove('progress-bar-animated');
+      window.location.href = '/runs/' + job.run_id;
+    } else if (job.status === 'failed') {
+      bar.classList.remove('progress-bar-animated');
+      bar.classList.add('bg-danger');
+      failedCard.style.display = '';
+      errorPre.textContent = job.error || job.message || 'Unknown error';
+    } else if (job.status === 'pushback') {
+      bar.classList.remove('progress-bar-animated');
+      bar.classList.add('bg-warning');
+      pushbackCard.style.display = '';
+      pushbackReason.textContent = job.message || '';
+      if (job.redirect_url) pushbackLink.href = job.redirect_url;
+    }
+  }
+
+  let terminal = false;
+  function markTerminal(job) {
+    terminal = job && ['done', 'failed', 'pushback'].includes(job.status);
+  }
+
+  // Try WebSocket first, fall back to polling on failure.
+  let pollTimer = null;
+  function startPolling() {
+    if (pollTimer) return;
+    async function tick() {
+      try {
+        const r = await fetch('/api/jobs/' + jobId, {cache: 'no-store'});
+        if (!r.ok) throw new Error('http ' + r.status);
+        const job = await r.json();
+        render(job);
+        markTerminal(job);
+      } catch (e) { /* swallow; try again */ }
+      if (!terminal) pollTimer = setTimeout(tick, 1500);
+    }
+    tick();
+  }
+
+  function startWs() {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + window.location.host + '/ws/jobs/' + jobId;
+    let ws;
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      return startPolling();
+    }
+    let opened = false;
+    ws.onopen = () => { opened = true; };
+    ws.onmessage = (ev) => {
+      try {
+        const job = JSON.parse(ev.data);
+        render(job);
+        markTerminal(job);
+      } catch (e) { /* ignore parse errors */ }
+    };
+    ws.onerror = () => { if (!opened) startPolling(); };
+    ws.onclose = () => { if (!terminal) startPolling(); };
+  }
+
+  startWs();
+})();
+</script>
+{% endblock %}

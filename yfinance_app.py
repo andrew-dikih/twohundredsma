@@ -6,6 +6,11 @@ import yfinance as yf
 import numpy as np
 import os
 import aiohttp  # Import aiohttp for asynchronous HTTP requests
+from typing import Optional, Callable, Awaitable, List
+import logging
+
+# module logger
+logger = logging.getLogger(__name__)
 
 from russell_2000 import russell2000_data
 from sp500 import sp500_data
@@ -14,6 +19,28 @@ from sp500 import sp500_data
 # debugpy.listen(("0.0.0.0", 5678))  # 5678 is the debug port
 # print("Waiting for debugger attach...")
 # debugpy.wait_for_client()  # Optional: pause until debugger attaches
+
+# Load .env so ALPHA_VANTAGE_KEY (and other secrets) are available in os.environ
+try:
+    from dotenv import load_dotenv, find_dotenv
+    # prefer an explicit find so running from other CWDs still loads the repo .env
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path)
+    else:
+        # fallback to default behavior
+        load_dotenv()
+except Exception:
+    # If python-dotenv isn't installed, we silently continue; environment may already contain the key
+    pass
+
+# Optional dividend provider callable: async def provider(ticker, price=None) -> dict|None
+from dividends.dividend_provider import DividendProvider as BaseDividendProvider
+from dividends.yf_provider import YFProvider
+from dividends.alpha_vantage import AlphaVantageProvider
+
+# A list of providers, tried in order until one returns a result
+ProvidersList = List[BaseDividendProvider]
 
 sp500_tickers = [(symbol.replace('.', '-'), name, 'S&P') for symbol, name in sp500_data]
 sp500_set = {symbol for symbol, _, _ in sp500_tickers}
@@ -31,7 +58,7 @@ for x in russell2000_tickers:
 owned_tickers = {
     "AMD", "OXY", "SIRI", "CDW", "COP", "FDX", "MRK", "VRSN", "FANG", "FSLR", "HII", "LEN", "NUE", "PRU", "TSM", "TSLA", "META", "NVDA", "BRK-B",
     "ACLS", "AMPH", "AMR", "ATKR", "CCS", "HOV", "ICFI", "PRU", "TDW", "TSM", "VAL", "ARCB", "BXC", "STNG", "ZEUS", "ARCB", "PCVX", "UNH", "IOSP", "LEN",
-    "MTRN", "NSSC", "VAL", "TSM", "MOH", "UPS", "NEGG", "SLVM", "KO", "AMCR", "BEN", "O", "LYB", "MO", "UVV", "CVX", "VZ", "PFE", "TGT"}
+    "MTRN", "NSSC", "VAL", "TSM", "MOH", "UPS", "NEGG", "SLVM", "KO", "AMCR", "BEN", "O", "LYB", "MO", "UVV", "CVX", "VZ", "PFE", "TGT", "SLG"}
 
 # Calculate the start date (400 weeks ago) and end date (current date)
 end_date = datetime.today()
@@ -102,7 +129,7 @@ async def download_stock_data(tickers):
 def should_print_results(ticker, recent_sma, current_price, sma_slope, slope_200_w) -> bool:
     if ticker in owned_tickers:
         return True
-    return recent_sma and recent_sma > current_price and sma_slope >= 0.1 and slope_200_w >= 0.1
+    return recent_sma and recent_sma > current_price and slope_200_w >= 0.1 # and sma_slope >= 0.1
 
 async def get_url(ticker):
     base_url = f"https://www.google.com/finance/quote/{ticker}:NYSE?window=5Y"
@@ -141,13 +168,13 @@ def missing_stock_data(entry):
     return entry[CLOSE_COL] is None or entry[CLOSE_COL].empty or entry[CUR_PRICE] is None or pd.isna(entry[CUR_PRICE])
 
 # Function to process stock data and calculate SMA and its slope
-async def process_stock_data(ticker, company_name, index, stock_data):
+async def process_stock_data(ticker, company_name, index, stock_data, providers: ProvidersList = None):
     df_close = stock_data[get_col_name(ticker)]
     current_price = float(df_close.iloc[-1]) if not df_close.empty else None
     entry = {CLOSE_COL: df_close, CUR_PRICE: current_price}
 
     if missing_stock_data(entry):
-        print(f"Skipping {ticker} due to missing data, try running again.")
+        print(f"Skipping {ticker} due to missing data, try running again. Close: {entry[CLOSE_COL]}, Current Price: {entry[CUR_PRICE]}")
         return {"Ticker": ticker}
     
     try:
@@ -191,7 +218,7 @@ async def process_stock_data(ticker, company_name, index, stock_data):
         
         # Store results only if the current price is below the 200-week SMA
         if should_print_results(ticker, recent_sma, current_price, sma_slope, slope_200_w):
-            print(f"Processing {ticker}: Current Price: {current_price}, Recent SMA: {recent_sma}, ")
+            # print(f"Processing {ticker}: Current Price: {current_price}, Recent SMA: {recent_sma}, ")
             url = await get_url(ticker)
 
             # Fetch additional financial data with retry logic
@@ -200,6 +227,8 @@ async def process_stock_data(ticker, company_name, index, stock_data):
             div_col = f'Dividends__{ticker}'
             trailing_12m_dividend = 0.0
             dividend_yield_pct = None
+            # track source for where the dividend yield came from
+            dividend_yield_source = None
             try:
                 if div_col in stock_data.columns:
                     df_div = stock_data[div_col].dropna()
@@ -208,44 +237,50 @@ async def process_stock_data(ticker, company_name, index, stock_data):
                         last_date = df_div.index.max()
                         period_start = last_date - pd.Timedelta(days=365)
                         trailing_12m_dividend = float(df_div[df_div.index > period_start].sum())
-                # Fallback: if no dividends in history, try to read dividendYield from yf info
-                if trailing_12m_dividend == 0.0:
-                    # get_info may contain 'dividendYield' as a decimal (e.g. 0.023) or as a percent (e.g. 2.3).
-                    try:
-                        info = await asyncio.to_thread(yf.Ticker(ticker).get_info)
-                        div_yield_info = info.get('dividendYield')
-                        if div_yield_info is not None:
-                            try:
-                                val = float(div_yield_info)
-                                # Normalize dividendYield into a percentage value (e.g. 0.007 -> 0.7, 0.7 -> 0.7, 70 -> 0.7)
-                                # Heuristics:
-                                # - If val < 0.1, treat as decimal fraction and multiply by 100 (0.007 -> 0.7)
-                                # - If val > 10, treat as scaled/integer and divide by 100 (70 -> 0.7)
-                                # - Otherwise assume val already represents percent-like value (0.7 -> 0.7, 2.5 -> 2.5)
-                                if 0 < val < 0.1:
-                                    dividend_yield_pct = val * 100
-                                elif val > 10:
-                                    dividend_yield_pct = val / 100
-                                else:
-                                    dividend_yield_pct = val
-                            except Exception:
-                                dividend_yield_pct = None
-                    except Exception:
-                        dividend_yield_pct = None
+                    # Fallback: if no dividends in history, try to read dividendYield from yf info
+                    if trailing_12m_dividend == 0.0:
+                        # First, attempt the light-weight yf.get_info approach
+                        try:
+                            info = await asyncio.to_thread(yf.Ticker(ticker).get_info)
+                            div_yield_info = info.get('dividendYield')
+                            if div_yield_info is not None:
+                                try:
+                                    val = float(div_yield_info)
+                                    if 0 < val < 0.1:
+                                        dividend_yield_pct = val * 100
+                                    elif val > 10:
+                                        dividend_yield_pct = val / 100
+                                    else:
+                                        dividend_yield_pct = val
+                                except Exception:
+                                    dividend_yield_pct = None
+                        except Exception:
+                            dividend_yield_pct = None
 
-                # Track source of dividend yield
-                dividend_yield_source = None
+                        # If still no dividend_yield_pct, and a provider was injected, call it (serial, patient)
+                        if dividend_yield_pct is None and providers:
+                            for prov in providers:
+                                try:
+                                    prov_result = await prov.get_dividend(ticker, price=current_price)
+                                except Exception as e:
+                                    print(f"Provider {prov.__class__.__name__} error for {ticker}: {e}")
+                                    prov_result = None
+                                if prov_result:
+                                    trailing_12m_dividend = prov_result.get('trailing_12m_dividend') or trailing_12m_dividend
+                                    if prov_result.get('dividend_yield_pct') is not None:
+                                        dividend_yield_pct = prov_result.get('dividend_yield_pct')
+                                    elif prov_result.get('trailingAnnualDividendYield') is not None:
+                                        dividend_yield_pct = prov_result.get('trailingAnnualDividendYield') * 100
+                                    else:
+                                        if trailing_12m_dividend and current_price:
+                                            dividend_yield_pct = (trailing_12m_dividend / current_price) * 100
+                                    dividend_yield_source = prov_result.get('source', dividend_yield_source)
+                                    break
 
                 # If we have trailing dividend and a price, compute yield (prefer calculated)
                 if trailing_12m_dividend and current_price:
                     dividend_yield_pct = (trailing_12m_dividend / current_price) * 100
                     dividend_yield_source = 'calculated'
-                else:
-                    # If we obtained dividend_yield_pct from info earlier, mark source
-                    if dividend_yield_pct is not None:
-                        dividend_yield_source = 'info'
-                    else:
-                        dividend_yield_source = 'none'
             except Exception as e:
                 print(f"Warning computing dividends for {ticker}: {e}")
 
@@ -272,16 +307,16 @@ async def process_stock_data(ticker, company_name, index, stock_data):
         print(f"Error processing {ticker}: {e}")
     return {"Ticker": ticker, "Consider": False}
 
-async def process_batch(batch, stock_data, semaphore):
+async def process_batch(batch, stock_data, semaphore, providers: ProvidersList = None):
     """Process a batch of tickers with a concurrency limit."""
     async with semaphore:
         tasks = [
-            process_stock_data(ticker, company_name, index, stock_data)
+            process_stock_data(ticker, company_name, index, stock_data, providers=providers)
             for ticker, company_name, index in batch
         ]
         return await asyncio.gather(*tasks)
 
-async def main():
+async def main(providers: ProvidersList = None):
     print("Starting")
     tickers = sorted([ticker for ticker, _, _ in all_tickers])
     stock_data = await download_stock_data(tickers)
@@ -300,7 +335,7 @@ async def main():
     results = []
     missing = []
     for batch in batches:
-        batch_results = await process_batch(batch, stock_data, semaphore)
+        batch_results = await process_batch(batch, stock_data, semaphore, providers=providers)
         for result in batch_results:
             if not result:
                 missing.append("Unknown")
@@ -323,5 +358,22 @@ async def main():
     # Overwrite the result file
     results_df.to_json(RESULT_FILE, orient='records', indent=4, mode='w')
 
-# Run with caching (set force_refresh=True if you want fresh data)
-asyncio.run(main())
+def build_default_providers():
+    providers = [YFProvider()]
+    # Only add AlphaVantage if the key is present
+    av_key = os.environ.get('ALPHA_VANTAGE_KEY')
+    if av_key:
+        logger.info("ALPHA_VANTAGE_KEY found in environment (len=%d). Adding AlphaVantageProvider.", len(av_key))
+        providers.append(AlphaVantageProvider())
+    else:
+        logger.info("ALPHA_VANTAGE_KEY not found in environment; AlphaVantageProvider not added.")
+    return providers
+
+
+if __name__ == '__main__':
+    # Configure basic logging so provider modules can emit their status
+    import logging
+    level = logging.DEBUG if os.environ.get('DIVIDEND_DEBUG') else logging.INFO
+    logging.basicConfig(level=level, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    providers = build_default_providers()
+    asyncio.run(main(providers))
