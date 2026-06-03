@@ -178,6 +178,11 @@ yfinance.cache
 
 # Local research / debugging artifacts (one-off analysis scripts and outputs)
 _*.py
+# ...but the following underscore modules are runtime deps of the advisor and
+# must be tracked.
+!_signal_engine.py
+!_harness.py
+!_sweep1.py
 out_*.txt
 *.png
 *.log
