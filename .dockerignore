@@ -1,0 +1,24 @@
+# Exclude things the Container App doesn't need (and that bloat the build context)
+.git
+.github
+.vscode
+.playwright-mcp
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.log
+out_*.txt
+strat_results
+*.png
+*.csv
+yfinance.cache
+fetch_*.log
+sweep_*.log
+rolling.log
+advisor_data
+.env
+README.md
+LICENSE
+node_modules
+.pytest_cache

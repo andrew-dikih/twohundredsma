@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="h4">Portfolio preview</h2>
+<p class="text-muted small">
+  As of <strong>{{ portfolio.asof_date }}</strong> · {{ portfolio.account_summary() }}
+</p>
+
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card"><div class="card-body">
+      <div class="text-muted small">Total value</div>
+      <div class="h4 mono">${{ "{:,.2f}".format(portfolio.total_value) }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-4">
+    <div class="card"><div class="card-body">
+      <div class="text-muted small">Cash (sweep)</div>
+      <div class="h4 mono">${{ "{:,.2f}".format(portfolio.cash) }}</div>
+    </div></div>
+  </div>
+  <div class="col-md-4">
+    <div class="card"><div class="card-body">
+      <div class="text-muted small">Holdings</div>
+      <div class="h4">{{ portfolio.holdings|length }} tickers</div>
+    </div></div>
+  </div>
+</div>
+
+<table class="table table-sm bg-white">
+  <thead><tr><th>Ticker</th><th class="text-end">Shares</th><th class="text-end">Price</th><th class="text-end">Value</th><th>Account</th></tr></thead>
+  <tbody>
+  {% for ticker, pos in portfolio.holdings.items() %}
+    <tr>
+      <td class="mono"><strong>{{ ticker_link(ticker)|safe }}</strong></td>
+      <td class="text-end mono">{{ "%.3f"|format(pos.shares) }}</td>
+      <td class="text-end mono">${{ "%.2f"|format(pos.price) }}</td>
+      <td class="text-end mono">${{ "{:,.2f}".format(pos.value) }}</td>
+      <td class="small text-muted">{{ pos.account }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form method="post" action="/run" class="mt-4">
+  <input type="hidden" name="token" value="{{ token }}">
+  <div class="form-check mb-2">
+    <input class="form-check-input" type="checkbox" name="force_rebalance" id="force_rebalance" value="1">
+    <label class="form-check-label small" for="force_rebalance">
+      <strong>Force annual rebalance</strong> — pretend this run is February. Re-screens the universe
+      and rebuilds the full target portfolio instead of holding. Useful for "what would Feb look like
+      if it were today?" experiments.
+    </label>
+  </div>
+  <button type="submit" class="btn btn-success btn-lg">▶ Run advisor</button>
+  <a href="/upload" class="btn btn-link">Upload different file</a>
+</form>
+{% endblock %}

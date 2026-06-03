@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+{% if active_jobs %}
+<div class="card border-primary mb-3">
+  <div class="card-body">
+    <h3 class="h6 mb-2">⏳ Active advisor runs</h3>
+    <table class="table table-sm mb-0">
+      <thead><tr><th>#</th><th>Started</th><th>Status</th><th>Step</th><th class="text-end">Progress</th><th></th></tr></thead>
+      <tbody>
+      {% for j in active_jobs %}
+        <tr>
+          <td class="mono">{{ j.id }}</td>
+          <td class="mono small">{{ j.started_at[:19] }}</td>
+          <td>
+            {% if j.status == 'running' %}<span class="badge bg-primary">running</span>
+            {% elif j.status == 'queued' %}<span class="badge bg-secondary">queued</span>
+            {% endif %}
+          </td>
+          <td class="small">{{ j.step_name }} ({{ j.step_idx }}/{{ j.step_total }})</td>
+          <td class="text-end mono">{{ "%.0f"|format(j.progress_pct) }}%</td>
+          <td><a class="btn btn-sm btn-outline-primary" href="/jobs/{{ j.id }}">view</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-md-7">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h4">Start a new run</h2>
+        <p class="text-muted">Upload your latest Fidelity portfolio CSV. The advisor evaluates your holdings against the champion <code>{{ strategy.short_label }}</code> strategy and tells you what to buy or sell.</p>
+        <a href="/upload" class="btn btn-primary">Upload CSV</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-5">
+    {% if last_run %}
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h5">Last run</h2>
+        <p class="mb-1"><strong>{{ last_run.run_ts[:10] }}</strong> ({{ last_run.run_type }})</p>
+        <p class="mb-1">Value: <span class="mono">${{ "{:,.2f}".format(last_run.portfolio_value) }}</span></p>
+        <p class="mb-1">Stocks {{ "%.1f"|format(last_run.stocks_pct*100) }}% / BND {{ "%.1f"|format(last_run.bnd_pct*100) }}%</p>
+        <a href="/runs/{{ last_run.id }}" class="btn btn-sm btn-outline-secondary mt-2">View detail</a>
+      </div>
+    </div>
+    {% else %}
+    <div class="card border-info">
+      <div class="card-body">
+        <h2 class="h5">No runs yet</h2>
+        <p class="text-muted small">Upload a CSV to get started.</p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if recent_runs %}
+<h3 class="h5 mt-5">Recent runs</h3>
+<table class="table table-sm bg-white">
+  <thead><tr><th>Date</th><th>Type</th><th class="text-end">Value</th><th>Stocks/BND</th><th>AI</th><th></th></tr></thead>
+  <tbody>
+  {% for r in recent_runs %}
+    <tr>
+      <td class="mono">{{ r.run_ts[:10] }}</td>
+      <td>{{ r.run_type }}</td>
+      <td class="text-end mono">${{ "{:,.0f}".format(r.portfolio_value) }}</td>
+      <td>{{ "%.0f"|format(r.stocks_pct*100) }}% / {{ "%.0f"|format(r.bnd_pct*100) }}%</td>
+      <td>
+        {% if r.ai_status == 'full' %}✅
+        {% elif r.ai_status == 'partial' %}⚠️
+        {% elif r.ai_status == 'failed' %}🚫
+        {% else %}❌{% endif %}
+      </td>
+      <td>
+        <a class="btn btn-sm btn-outline-secondary" href="/runs/{{ r.id }}">view</a>
+        <form method="post" action="/runs/{{ r.id }}/delete" class="d-inline" onsubmit="return confirm('Delete run #{{ r.id }}? This cannot be undone.');">
+          <button type="submit" class="btn btn-sm btn-outline-danger">delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if ai_review and ai_review.critical_count and ai_review.critical_count > 0 %}
+<div class="alert alert-danger">
+  <h4>🚨 {{ ai_review.critical_count }} CRITICAL AI flag(s)</h4>
+  <p class="mb-0">{{ ai_review.portfolio_summary }}</p>
+</div>
+{% elif ai_review and ai_review.warning_count and ai_review.warning_count > 0 %}
+<div class="alert alert-warning">
+  <h5>⚠️ {{ ai_review.warning_count }} WARNING AI flag(s)</h5>
+  <p class="mb-0 small">{{ ai_review.portfolio_summary }}</p>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-start">
+  <div>
+    <h2 class="h4">Run #{{ run.id }} — {{ run.run_type }}</h2>
+    <p class="text-muted small mb-2">
+      asof <strong class="mono">{{ run.asof_date }}</strong> · executed <span class="mono">{{ run.run_ts[:19] }}</span>
+    </p>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    {% if run.ai_status == 'full' %}<span class="badge bg-success">AI: full review</span>
+    {% elif run.ai_status == 'partial' %}<span class="badge bg-warning text-dark">AI: partial</span>
+    {% elif run.ai_status == 'failed' %}<span class="badge bg-danger">AI: failed</span>
+    {% elif run.ai_status == 'disabled' %}<span class="badge bg-secondary">AI: disabled</span>
+    {% else %}<span class="badge bg-light text-dark">AI: {{ run.ai_status or 'n/a' }}</span>
+    {% endif %}
+    <form method="post" action="/runs/{{ run.id }}/delete" class="d-inline" onsubmit="return confirm('Delete run #{{ run.id }}? This cannot be undone.');">
+      <button type="submit" class="btn btn-sm btn-outline-danger">Delete run</button>
+    </form>
+  </div>
+</div>
+
+<div class="row mt-3">
+  <div class="col-md-3"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">Portfolio value</div>
+    <div class="h5 mono mb-0">${{ "{:,.2f}".format(run.portfolio_value) }}</div>
+  </div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">Cash (after)</div>
+    <div class="h5 mono mb-0">${{ "{:,.2f}".format(run.cash) }}</div>
+  </div></div></div>
+  {% set cb = run.cost_basis %}
+  {% set invested = (run.portfolio_value or 0) - (run.cash or 0) %}
+  {% set gain = (invested - cb) if cb else None %}
+  {% set gain_pct = (gain / cb * 100) if (cb and cb > 0) else None %}
+  <div class="col-md-3"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">Unrealized gain</div>
+    {% if gain is not none %}
+    <div class="h5 mono mb-0 {{ 'order-buy' if gain >= 0 else 'order-sell' }}">
+      {{ '+' if gain >= 0 else '' }}${{ "{:,.2f}".format(gain) }}
+    </div>
+    <div class="small {{ 'order-buy' if gain_pct >= 0 else 'order-sell' }}">
+      {{ '+' if gain_pct >= 0 else '' }}{{ "%.2f"|format(gain_pct) }}% on ${{ "{:,.0f}".format(cb) }} basis
+    </div>
+    {% else %}<div class="h6 text-muted mb-0">—</div><div class="small text-muted">no cost basis in CSV</div>{% endif %}
+  </div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">Allocation</div>
+    <div class="h6 mb-0">{{ "%.1f"|format(run.stocks_pct*100) }}% stocks / {{ "%.1f"|format(run.bnd_pct*100) }}% BND</div>
+    <div class="small text-muted">SPY DD {{ "%.2f"|format((run.spy_drawdown or 0)*100) }}%</div>
+  </div></div></div>
+</div>
+
+{% if run.notes %}
+<div class="alert alert-light mt-3 small mb-0">
+  <strong>Notes:</strong><br>
+  {{ run.notes | replace('\n', '<br>') | safe }}
+</div>
+{% endif %}
+
+{% if sector_breakdown %}
+{% set colors = ['bg-primary','bg-success','bg-info','bg-warning','bg-danger','bg-secondary','bg-dark','#6610f2','#fd7e14','#20c997','#6f42c1','#d63384'] %}
+{% macro sector_card(rows, label, sublabel) %}
+<div class="card mt-3">
+  <div class="card-body py-2">
+    <div class="d-flex justify-content-between align-items-baseline mb-2">
+      <div class="small text-muted">{{ label }} <span class="text-secondary">— {{ sublabel }}</span></div>
+      <div class="small text-muted">{{ rows|length }} categories</div>
+    </div>
+    <div class="progress" style="height: 18px;">
+      {% for row in rows %}
+        {% set color = colors[loop.index0 % colors|length] %}
+        <div class="progress-bar {% if color.startswith('bg-') %}{{ color }}{% endif %}"
+             {% if not color.startswith('bg-') %}style="width: {{ row.pct }}%; background-color: {{ color }}; cursor: default;"{% else %}style="width: {{ row.pct }}%; cursor: default;"{% endif %}
+             data-bs-toggle="tooltip" data-bs-placement="top" data-bs-delay='{"show":0,"hide":50}'
+             data-bs-title="{{ row.sector }}: {{ '%.1f'|format(row.pct) }}% (${{ '{:,.0f}'.format(row.value) }})"
+             title="{{ row.sector }}: {{ '%.1f'|format(row.pct) }}%">
+          {% if row.pct >= 6 %}{{ "%.0f"|format(row.pct) }}%{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <table class="table table-sm mt-2 mb-0">
+      <tbody>
+        {% for row in rows %}
+        {% set color = colors[loop.index0 % colors|length] %}
+        <tr>
+          <td style="width: 1.2rem;">
+            <span class="d-inline-block" style="width:0.8rem; height:0.8rem; border-radius:2px; {% if color.startswith('bg-') %}background-color: var(--bs-{{ color[3:] }}, #888);{% else %}background-color: {{ color }};{% endif %}"></span>
+          </td>
+          <td>{{ row.sector }}</td>
+          <td class="text-end mono">${{ "{:,.0f}".format(row.value) }}</td>
+          <td class="text-end mono" style="width: 4rem;">{{ "%.1f"|format(row.pct) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endmacro %}
+
+{{ sector_card(sector_breakdown, "Holdings by category", "before today's orders") }}
+{% if sector_breakdown_after %}
+{{ sector_card(sector_breakdown_after, "Holdings by category", "projected after today's orders execute") }}
+{% endif %}
+{% endif %}
+
+<h3 class="h5 mt-4">Marching orders ({{ orders|length }})</h3>
+{% if not orders %}
+<div class="alert alert-info">
+  <strong>Hold all positions.</strong> No triggers fired this month — keep portfolio as-is.
+</div>
+{% else %}
+<table class="table bg-white">
+  <thead>
+    <tr>
+      <th>Action</th><th>Ticker</th><th class="text-end">Shares</th>
+      <th class="text-end">Price</th><th class="text-end">$ Value</th>
+      <th class="text-end">Gain</th>
+      <th>Category</th><th>Reason</th><th>AI</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for o in orders %}
+    {% set ai = ai_by_ticker.get(o.ticker) %}
+    <tr {% if ai and ai.severity == 'CRITICAL' %}class="table-danger"{% elif ai and ai.severity == 'WARNING' %}class="table-warning"{% endif %}>
+      <td class="order-{{ o.action|lower }}">{{ o.action }}</td>
+      <td class="mono">
+        <strong>{{ ticker_link(o.ticker)|safe }}</strong>
+        {% set _nm = ticker_name(o.ticker) %}
+        {% if _nm %}<div class="small text-muted">{{ _nm }}</div>{% endif %}
+        {% set _sec = ticker_sector(o.ticker) %}
+        {% if _sec %}<div class="small text-secondary fst-italic">{{ _sec }}</div>{% endif %}
+      </td>
+      <td class="text-end mono">{{ "%.3f"|format(o.shares) }}</td>
+      <td class="text-end mono">${{ "%.2f"|format(o.price) }}</td>
+      <td class="text-end mono">${{ "{:,.2f}".format(o.dollar_value) }}</td>
+      {% set _cb = cost_basis_by_ticker.get(o.ticker, 0) %}
+      {% set _sh = holdings_before.get(o.ticker, 0) %}
+      {% set _px = price_snapshot.get(o.ticker, 0) %}
+      {% set _gain = (_sh * _px - _cb) if (_cb and _sh and _px) else None %}
+      {% set _gain_pct = (_gain / _cb * 100) if (_gain is not none and _cb > 0) else None %}
+      <td class="text-end mono small {% if _gain is not none %}{{ 'order-buy' if _gain >= 0 else 'order-sell' }}{% endif %}">
+        {% if _gain is not none %}{{ '+' if _gain >= 0 else '' }}${{ "{:,.2f}".format(_gain) }}<br><span class="small">{{ '+' if _gain_pct >= 0 else '' }}{{ "%.1f"|format(_gain_pct) }}%</span>{% else %}—{% endif %}
+      </td>
+      <td><span class="small text-muted">{{ o.category }}</span></td>
+      <td class="small">{{ o.reason }}</td>
+      <td>
+        {% if ai %}
+          <span class="pill sev-{{ ai.severity }}" title="{{ ai.summary }}">{{ ai.severity }}</span>
+        {% elif run.ai_status == 'disabled' %}
+          <span class="text-muted small">—</span>
+        {% else %}
+          <span class="text-muted small">no review</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% if ai and ai.severity in ['CAUTION','WARNING','CRITICAL'] %}
+    <tr class="{% if ai.severity == 'CRITICAL' %}table-danger{% elif ai.severity == 'WARNING' %}table-warning{% else %}table-secondary{% endif %}">
+      <td colspan="9" class="small">
+        <strong>AI {{ ai.severity }} on {{ o.ticker }}:</strong> {{ ai.summary }}
+        {% if ai.evidence %}
+          <br>Evidence:
+          {% for ev in ai.evidence %}
+            {% if ev is mapping %}
+              {% if ev.url %}<a href="{{ ev.url }}" target="_blank" rel="noopener noreferrer" title="{{ ev.kind }}">{{ ev.text }}</a>{% else %}<span title="{{ ev.kind }}">{{ ev.text }}</span>{% endif %}{% if not loop.last %} · {% endif %}
+            {% else %}
+              {{ ev }}{% if not loop.last %} · {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if ai_review and ai_review.portfolio_summary and not (ai_review.critical_count or ai_review.warning_count) %}
+<div class="alert alert-light small">
+  <strong>AI portfolio summary:</strong> {{ ai_review.portfolio_summary }}
+</div>
+{% endif %}
+
+<details class="mt-3" open>
+  <summary class="text-muted small">Holdings before → target ({{ holdings_before|length }} → {{ holdings_target|length }})</summary>
+  <table class="table table-sm bg-white mt-2">
+    <thead><tr>
+      <th>Ticker</th>
+      <th class="text-end">Price</th>
+      <th class="text-end">Yield</th>
+      <th class="text-end">Before (sh)</th>
+      <th class="text-end">Before ($)</th>
+      <th class="text-end">Cost basis</th>
+      <th class="text-end">Gain</th>
+      <th class="text-end">Target (sh)</th>
+      <th class="text-end">Target ($)</th>
+      <th class="text-end">Δ shares</th>
+      <th class="text-end">Δ value</th>
+    </tr></thead>
+    <tbody>
+      {% set all_keys = (holdings_before.keys() | list) + (holdings_target.keys() | list) %}
+      {% set ns = namespace(total_before=0.0, total_target=0.0, total_delta=0.0, total_cb=0.0, total_gain=0.0) %}
+      {% for t in all_keys | unique | sort %}
+        {% set b = holdings_before.get(t, 0) %}
+        {% set tg = holdings_target.get(t, 0) %}
+        {% set px = price_snapshot.get(t, 0) %}
+        {% set bv = b * px %}
+        {% set tv = tg * px %}
+        {% set dv = tv - bv %}
+        {% set cb = cost_basis_by_ticker.get(t, 0) %}
+        {% set gain = (bv - cb) if cb else None %}
+        {% set gain_pct = (gain / cb * 100) if (cb and cb > 0) else None %}
+        {% set ns.total_before = ns.total_before + bv %}
+        {% set ns.total_target = ns.total_target + tv %}
+        {% set ns.total_delta = ns.total_delta + dv %}
+        {% set ns.total_cb = ns.total_cb + cb %}
+        {% if gain is not none %}{% set ns.total_gain = ns.total_gain + gain %}{% endif %}
+        <tr>
+          <td class="mono">
+            {{ ticker_link(t)|safe }}
+            {% set _nm = ticker_name(t) %}
+            {% if _nm %}<div class="small text-muted">{{ _nm }}</div>{% endif %}
+            {% set _sec = ticker_sector(t) %}
+            {% if _sec %}<div class="small text-secondary fst-italic">{{ _sec }}</div>{% endif %}
+          </td>
+          <td class="text-end mono small">{% if px %}${{ "%.2f"|format(px) }}{% else %}—{% endif %}</td>
+          {% set _dy = ticker_yield(t) %}
+          <td class="text-end mono small">{% if _dy is not none %}{{ "%.2f"|format(_dy) }}%{% else %}—{% endif %}</td>
+          <td class="text-end mono">{{ "%.3f"|format(b) }}</td>
+          <td class="text-end mono">{% if px %}${{ "{:,.2f}".format(bv) }}{% else %}—{% endif %}</td>
+          <td class="text-end mono small">{% if cb %}${{ "{:,.2f}".format(cb) }}{% else %}—{% endif %}</td>
+          <td class="text-end mono small {% if gain is not none %}{{ 'order-buy' if gain >= 0 else 'order-sell' }}{% endif %}">
+            {% if gain is not none %}{{ '+' if gain >= 0 else '' }}${{ "{:,.2f}".format(gain) }}<br><span class="small">{{ '+' if gain_pct >= 0 else '' }}{{ "%.1f"|format(gain_pct) }}%</span>{% else %}—{% endif %}
+          </td>
+          <td class="text-end mono">{{ "%.3f"|format(tg) }}</td>
+          <td class="text-end mono">{% if px %}${{ "{:,.2f}".format(tv) }}{% else %}—{% endif %}</td>
+          <td class="text-end mono {% if tg - b > 0.0005 %}order-buy{% elif tg - b < -0.0005 %}order-sell{% endif %}">{{ "%+.3f"|format(tg - b) }}</td>
+          <td class="text-end mono {% if dv > 0.005 %}order-buy{% elif dv < -0.005 %}order-sell{% endif %}">{% if px %}{% if dv >= 0 %}+{% endif %}${{ "{:,.2f}".format(dv) }}{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr class="table-light">
+        <th colspan="4" class="text-end">Totals (excl. cash):</th>
+        <th class="text-end mono">${{ "{:,.2f}".format(ns.total_before) }}</th>
+        <th class="text-end mono">{% if ns.total_cb %}${{ "{:,.2f}".format(ns.total_cb) }}{% else %}—{% endif %}</th>
+        <th class="text-end mono {% if ns.total_gain > 0.005 %}order-buy{% elif ns.total_gain < -0.005 %}order-sell{% endif %}">{% if ns.total_cb %}{% if ns.total_gain >= 0 %}+{% endif %}${{ "{:,.2f}".format(ns.total_gain) }}{% else %}—{% endif %}</th>
+        <th></th>
+        <th class="text-end mono">${{ "{:,.2f}".format(ns.total_target) }}</th>
+        <th></th>
+        <th class="text-end mono {% if ns.total_delta > 0.005 %}order-buy{% elif ns.total_delta < -0.005 %}order-sell{% endif %}">{% if ns.total_delta >= 0 %}+{% endif %}${{ "{:,.2f}".format(ns.total_delta) }}</th>
+      </tr>
+    </tfoot>
+  </table>
+</details>
+
+<div class="mt-4">
+  <a href="/upload" class="btn btn-primary">New run</a>
+  <a href="/history" class="btn btn-outline-secondary">History</a>
+</div>
+
+{% endblock %}

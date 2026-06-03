@@ -175,3 +175,14 @@ cython_debug/
 
 # Omit yfinance.cache
 yfinance.cache
+
+# Local research / debugging artifacts (one-off analysis scripts and outputs)
+_*.py
+out_*.txt
+*.png
+*.log
+strat_results/
+dividends/
+current_portfolio_*.csv
+.playwright-mcp/
+advisor_data/

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Accounts · Portfolio Advisor{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h4 mb-3">Your accounts</h2>
+        <p class="text-muted small">
+          Each account is an independent portfolio scope — runs, contributions, and
+          job history are tracked per account. You can switch between accounts at
+          any time from the account selector in the top navigation bar.
+        </p>
+        {% if all_accounts %}
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Label</th><th class="mono">Slug</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+            {% for a in all_accounts %}
+            <tr>
+              <td>
+                {{ a.label }}
+                {% if a.slug == current_account_id %}<span class="badge bg-success ms-1">current</span>{% endif %}
+              </td>
+              <td class="mono small text-muted">{{ a.slug }}</td>
+              <td class="small mono">{{ a.created_at[:10] }}</td>
+              <td class="text-end">
+                {% if all_accounts|length > 1 %}
+                <form method="post" action="/accounts/{{ a.id }}/delete" class="d-inline"
+                      onsubmit="return confirm('Delete account &quot;{{ a.label }}&quot;? This unlinks the account but does NOT delete historical runs/contributions tied to its slug.');">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">delete</button>
+                </form>
+                {% else %}
+                <span class="text-muted small">last account</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No accounts yet. Create one below to get started.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Add account</h2>
+        <form method="post" action="/accounts/new">
+          <div class="mb-2">
+            <label class="form-label small">Label</label>
+            <input type="text" name="label" class="form-control" required maxlength="60"
+                   placeholder="e.g. Roth IRA, 401k">
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm">Create</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

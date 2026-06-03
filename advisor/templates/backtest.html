@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="h4">Backtest</h2>
+
+<div class="card bg-white mb-3"><div class="card-body small">
+  <p class="mb-2">
+    Run any combination of our top stock strategies and ETF benchmark mixes side by side over a chosen
+    window. All strategies share the same starting balance, contribution amount, and contribution months
+    (Jan/Apr/Jul/Oct for quarterly, Jan only for annual, every month for monthly).
+  </p>
+  <p class="mb-0 text-muted">
+    Stock strategies rebalance annually in February, with dip-buy tiers triggered on SPY drawdowns.
+    ETF mixes mark-to-market monthly and rebalance to target weights every February.
+  </p>
+</div></div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <form method="post" action="/backtest">
+    <div class="row g-3">
+      <div class="col-md-2">
+        <label class="form-label small mb-1">Years</label>
+        <input type="number" class="form-control form-control-sm" name="years" min="1" max="20"
+               value="{{ form_defaults.years }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">Starting balance ($)</label>
+        <input type="number" class="form-control form-control-sm" name="init" min="0" step="100"
+               value="{{ form_defaults.init|int }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">Annual contribution ($)</label>
+        <input type="number" class="form-control form-control-sm" name="annual_contrib" min="0" step="100"
+               value="{{ form_defaults.annual_contrib|int }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">Contribution cadence</label>
+        <select class="form-select form-select-sm" name="cadence">
+          {% for cid, clabel in [('M','Monthly'),('Q','Quarterly'),('A','Annual'),('none','None')] %}
+            <option value="{{ cid }}" {% if cid == form_defaults.cadence %}selected{% endif %}>{{ clabel }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <label class="form-label small mb-1">Strategies (pick 1–{{ max_strategies }})</label>
+      <div class="row g-2">
+        {% for sid, spec in strategies.items() %}
+          <div class="col-md-6">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="strategy" value="{{ sid }}"
+                     id="strat_{{ sid }}"
+                     {% if sid in form_defaults.selected %}checked{% endif %}>
+              <label class="form-check-label small" for="strat_{{ sid }}">
+                {{ spec.label }}
+                <span class="badge bg-{% if spec.kind == 'stock' %}primary{% else %}secondary{% endif %} ms-1">{{ spec.kind }}</span>
+              </label>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex align-items-center gap-3">
+      <button type="submit" class="btn btn-primary btn-sm" onclick="this.disabled=true;this.innerText='Running...';this.form.submit();">
+        Run backtest
+      </button>
+      <span class="small text-muted">
+        Stock strategies take ~5–15s per variant on a warm cache (first run ~30s while market data loads).
+      </span>
+    </div>
+  </form>
+</div></div>
+
+{% if form_defaults.years >= 15 %}
+<div class="alert alert-warning small">
+  <strong>Survivorship bias warning:</strong> the stock universe / fundamentals snapshot is from 2026. Stock
+  strategies run over 15+ year windows include only tickers that survived to 2026 — IRR/multiples will be
+  optimistic vs. the actual experience of an investor starting at that date. Use long windows for relative
+  comparison between strategies, not for absolute dollar projection.
+</div>
+{% endif %}
+
+{% if results %}
+<div class="card bg-white mb-3"><div class="card-body py-2 small">
+  <strong>Window:</strong> {{ run_info.start }} → {{ run_info.end }} ({{ run_info.years }}y)
+  &middot;
+  <strong>Seed:</strong> ${{ "{:,.0f}".format(run_info.init) }}
+  &middot;
+  <strong>{{ {'M':'Monthly','Q':'Quarterly','A':'Annual','none':'No'}[run_info.contrib_cadence] }} contributions:</strong>
+  ${{ "{:,.0f}".format(run_info.annual_contrib) }}/yr ({{ run_info.periods }} deposit{{ '' if run_info.periods == 1 else 's' }})
+  &middot;
+  <strong>Total contributed:</strong> ${{ "{:,.0f}".format(run_info.total_contributed) }}
+</div></div>
+
+<div class="card bg-white mb-3"><div class="card-body">
+  <canvas id="backtestChart" height="120"></canvas>
+</div></div>
+
+<table class="table table-sm bg-white small mb-4">
+  <thead>
+    <tr>
+      <th>Strategy</th>
+      <th class="text-end">Final</th>
+      <th class="text-end">Gain vs contributed</th>
+      <th class="text-end">IRR</th>
+      <th class="text-end">Max DD</th>
+      <th class="text-end">Calmar</th>
+      <th class="text-end">Multiple</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for sid, r in results.items() %}
+      {% set m = r.metrics %}
+      {% set final_val = m.get('final') or 0 %}
+      {% set gain_pct = ((final_val / run_info.total_contributed) - 1) * 100 if run_info.total_contributed else 0 %}
+      <tr>
+        <td>{{ r.label }} <span class="badge bg-{% if r.kind == 'stock' %}primary{% else %}secondary{% endif %} ms-1">{{ r.kind }}</span></td>
+        <td class="text-end mono">${{ "{:,.0f}".format(final_val) }}</td>
+        <td class="text-end mono {% if gain_pct < 0 %}order-sell{% endif %}">{{ "%+.1f"|format(gain_pct) }}%</td>
+        <td class="text-end mono">{% if m.get('irr') is not none %}{{ "%.2f"|format(m.irr * 100) }}%{% else %}–{% endif %}</td>
+        <td class="text-end mono order-sell">{% if m.get('maxdd') is not none %}{{ "%.1f"|format(m.maxdd * 100) }}%{% else %}–{% endif %}</td>
+        <td class="text-end mono">{% if m.get('calmar') is not none %}{{ "%.2f"|format(m.calmar) }}{% else %}–{% endif %}</td>
+        <td class="text-end mono">{% if m.get('multiple') is not none %}{{ "%.2f"|format(m.multiple) }}x{% else %}–{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if results %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  const INIT = {{ run_info.init|tojson }};
+  const CUM_CONTRIB = {{ run_info.cum_contrib_by_date|tojson }};
+  const seriesByStrat = {{ results|tojson }};
+  // Build union of all dates so missing months render as gaps
+  const dateSet = new Set();
+  for (const sid in seriesByStrat) {
+    for (const p of seriesByStrat[sid].series) dateSet.add(p.date);
+  }
+  const labels = Array.from(dateSet).sort();
+  const colors = ['#0d6efd','#dc3545','#198754','#fd7e14','#6f42c1','#20c997'];
+  let ci = 0;
+  const datasets = [];
+  for (const sid in seriesByStrat) {
+    const r = seriesByStrat[sid];
+    const m = Object.fromEntries(r.series.map(p => [p.date, p.value]));
+    datasets.push({
+      label: r.label,
+      data: labels.map(d => m[d] ?? null),
+      borderColor: colors[ci % colors.length],
+      borderWidth: r.kind === 'stock' ? 2.5 : 1.8,
+      borderDash: r.kind === 'stock' ? [] : [5,4],
+      fill: false, tension: 0.1, pointRadius: 0,
+    });
+    ci++;
+  }
+  // Helper: net return at a given equity & date (excludes contributions)
+  function netReturnPct(equity, dateStr) {
+    const inv = CUM_CONTRIB[dateStr] ?? INIT;
+    return inv > 0 ? ((equity / inv) - 1) * 100 : 0;
+  }
+  new Chart(document.getElementById('backtestChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const v = ctx.parsed.y;
+              if (v == null) return ctx.dataset.label + ': –';
+              const dateStr = ctx.label;
+              const inv = CUM_CONTRIB[dateStr] ?? INIT;
+              const pct = netReturnPct(v, dateStr);
+              return ctx.dataset.label + ': $' + Math.round(v).toLocaleString()
+                + '  (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% net of $'
+                + Math.round(inv).toLocaleString() + ' invested)';
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          position: 'left',
+          ticks: { callback: v => '$' + Math.round(v).toLocaleString() },
+          title: { display: true, text: 'Portfolio value ($)' },
+        },
+        y1: {
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'Net return on cash invested (%)' },
+          // Mirror the left axis range so the % tick labels line up with the
+          // same gridlines as the $ values. Use the most-recent cum-contrib
+          // value at each tick's date so contributions don't inflate the %.
+          afterDataLimits: (axis) => {
+            const yAxis = axis.chart.scales.y;
+            if (yAxis) { axis.min = yAxis.min; axis.max = yAxis.max; }
+          },
+          ticks: {
+            callback: function(v) {
+              // Use the latest-known cum-contrib (right edge of chart) so the
+              // tick scale is consistent across the visible range.
+              const lastDate = labels[labels.length - 1];
+              const inv = CUM_CONTRIB[lastDate] ?? INIT;
+              return (((v / inv) - 1) * 100).toFixed(0) + '%';
+            }
+          },
+        }
+      }
+    }
+  });
+</script>
+{% endif %}
+{% endblock %}

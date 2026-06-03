@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="h4">Portfolio vs benchmarks</h2>
+
+<div class="card bg-white mb-3"><div class="card-body small">
+  <h5 class="h6">What this page shows</h5>
+  <p class="mb-2">
+    This chart compares <strong>your actual portfolio value</strong> (measured at each advisor run)
+    against three passive index-only benchmarks, all seeded with the <strong>same starting dollar amount</strong>
+    as your first recorded run.
+  </p>
+  <p class="mb-2"><strong>Apples-to-apples simulation rules</strong> (same cadence as your strategy):</p>
+  <ul class="mb-2">
+    <li>Mark-to-market at every run date using ETF prices.</li>
+    <li>Add <strong>$1,750</strong> in Jan / Apr / Jul / Oct — split per target weights, just like your IRA contributions.</li>
+    <li><strong>Rebalance back to target weights every February</strong>, matching the strategy's annual rebal month.</li>
+  </ul>
+  <p class="mb-2">The benchmarks are:</p>
+  <ul class="mb-2">
+    <li><strong>SSO/BND 70/30</strong> — 70% <code>SSO</code> (2× S&amp;P 500 ETF) + 30% <code>BND</code> (US aggregate bonds).
+      The long-term champion among simple two-fund mixes — aggressive but BND dampens drawdowns.</li>
+    <li><strong>VTI/BND 70/30</strong> — 70% <code>VTI</code> (total US stock market) + 30% <code>BND</code>.
+      A textbook three-fund-lite mix. No leverage; lower drawdowns and lower long-term return than SSO/BND.</li>
+    <li><strong>SSO/VTI/BND 50/30/20</strong> — 50% SSO + 30% VTI + 20% BND. A blended "lean aggressive"
+      mix that hedges SSO's volatility with broad market and bonds.</li>
+  </ul>
+  <p class="mb-0 text-muted">
+    Beating these three with the same dollars deployed at the same cadence is the bar. Anything else
+    isn't a fair comparison.
+  </p>
+</div></div>
+
+{% if not portfolio_series %}
+<p class="text-muted">Need at least one run to show comparison. <a href="/upload">Start a run</a>.</p>
+{% else %}
+<div class="row mb-3">
+  <div class="col-md-4"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">Portfolio drawdown (current)</div>
+    <div class="h5 mono mb-0 {{ 'order-sell' if dd_stats.port_cur < 0 else '' }}">{{ "%.2f"|format(dd_stats.port_cur) }}%</div>
+    <div class="small text-muted">from peak across all recorded runs</div>
+  </div></div></div>
+  <div class="col-md-4"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">Portfolio max drawdown</div>
+    <div class="h5 mono mb-0 {{ 'order-sell' if dd_stats.port_max < 0 else '' }}">{{ "%.2f"|format(dd_stats.port_max) }}%</div>
+    <div class="small text-muted">worst peak-to-trough since run #1</div>
+  </div></div></div>
+  <div class="col-md-4"><div class="card"><div class="card-body py-2">
+    <div class="small text-muted">SPY drawdown (current)</div>
+    <div class="h5 mono mb-0 {{ 'order-sell' if dd_stats.spy_cur < 0 else '' }}">{{ "%.2f"|format(dd_stats.spy_cur) }}%</div>
+    <div class="small text-muted">SPY vs its all-time peak (latest run)</div>
+  </div></div></div>
+</div>
+
+<div class="card bg-white"><div class="card-body">
+  <canvas id="benchChart" height="120"></canvas>
+</div></div>
+
+<table class="table table-sm bg-white mt-3 small">
+  <thead><tr><th>asof</th><th class="text-end">Portfolio</th>{% for k in benchmark_series.keys() %}<th>{{ k }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for p in portfolio_series %}
+    <tr><td class="mono">{{ p.date }}</td><td class="text-end mono">${{ "{:,.0f}".format(p.value) }}</td>
+      {% for k in benchmark_series.keys() %}<td></td>{% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="text-muted small">
+  Note: this view becomes meaningful after several monthly runs. With only one or two data points the lines
+  will look flat.
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if portfolio_series %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  const portfolio = {{ portfolio_series | tojson }};
+  const benchmarks = {{ benchmark_series | tojson }};
+  const labels = portfolio.map(p => p.date);
+  const datasets = [{
+    label: 'Your portfolio',
+    data: portfolio.map(p => p.value),
+    borderColor: '#0d6efd', borderWidth: 3, fill: false, tension: 0.1,
+  }];
+  const colors = ['#dc3545','#198754','#fd7e14','#6f42c1'];
+  let i = 0;
+  for (const [k, series] of Object.entries(benchmarks)) {
+    const m = Object.fromEntries(series.map(s => [s.date, s.value]));
+    datasets.push({
+      label: k,
+      data: labels.map(d => m[d] ?? null),
+      borderColor: colors[i++ % colors.length], borderWidth: 2, borderDash: [4,4], fill: false, tension: 0.1,
+    });
+  }
+  new Chart(document.getElementById('benchChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: { responsive: true, plugins: { legend: { position: 'bottom' } },
+               scales: { y: { ticks: { callback: v => '$' + Math.round(v).toLocaleString() } } } }
+  });
+</script>
+{% endif %}
+{% endblock %}

@@ -43,3 +43,24 @@ services:
     ports:
       - "8000:8000"
     command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+
+  portfolio_advisor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: portfolio_advisor
+    working_dir: /app
+    volumes:
+      - .:/app
+      - advisor_data:/data
+    ports:
+      - "8001:8001"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - AI_REVIEW_MODEL=${AI_REVIEW_MODEL:-openai/gpt-4.1}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-andrewdikih}
+    command: uvicorn advisor.app:app --host 0.0.0.0 --port 8001 --reload
+
+volumes:
+  advisor_data:
+

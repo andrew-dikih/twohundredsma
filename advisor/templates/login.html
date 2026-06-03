@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Login · Portfolio Advisor{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h4 mb-3">Log in</h2>
+        {% if error %}
+        <div class="alert alert-danger py-2 small">{{ error }}</div>
+        {% endif %}
+        <form method="post" action="/login">
+          <input type="hidden" name="next" value="{{ next_url or '/' }}">
+          <div class="mb-3">
+            <label class="form-label small">Username</label>
+            <input type="text" name="username" class="form-control" required autofocus>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Password</label>
+            <input type="password" name="password" class="form-control" required>
+          </div>
+          <button type="submit" class="btn btn-primary">Log in</button>
+          <a href="/register" class="btn btn-link">Create account</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -19,8 +19,14 @@ RUN uvicorn --version || echo "Uvicorn installation failed"
 # Copy the rest of the application files to the container
 COPY . .
 
-# Expose the port FastAPI will run on
-EXPOSE 8000
+# Make sure the local SQLite fallback dir exists; on Azure the app uses Cosmos
+# (COSMOS_CONNECTION_STRING set) and never writes to disk.
+RUN mkdir -p /data /app/advisor_data
 
-# Command to run the FastAPI application
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Expose the port FastAPI will run on
+EXPOSE 8000 8001
+
+# Default to the advisor on 8001 so the image runs cleanly in Azure Container
+# Apps with no command override. docker-compose overrides this locally to add
+# --reload.
+CMD ["uvicorn", "advisor.app:app", "--host", "0.0.0.0", "--port", "8001"]

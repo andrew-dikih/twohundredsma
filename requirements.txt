@@ -8,3 +8,7 @@ aiohttp
 lxml
 debugpy
 requests
+python-dotenv
+python-multipart
+openai>=1.0
+azure-cosmos>=4.7.0
