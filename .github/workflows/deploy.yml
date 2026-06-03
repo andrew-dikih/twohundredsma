@@ -9,6 +9,7 @@ on:
 env:
   REGISTRY: ${{ vars.AZURE_REGISTRY_URL }}
   IMAGE: ${{ vars.AZURE_REGISTRY_URL }}/twohundredsma
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-and-push:
@@ -20,7 +21,7 @@ jobs:
       image-tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set image tag
         id: tag
@@ -34,7 +35,7 @@ jobs:
           password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: dockerfile
