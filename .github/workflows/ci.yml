@@ -5,6 +5,25 @@ on:
     branches:
       - main
       - develop
+    # Passive documentation-only boundary: this is a narrow, explicit
+    # allowlist of root-level human-readable docs that carry no runtime
+    # behavior (nothing in advisor/, scripts/, tests/, templates/, or
+    # .github/** references or parses these files). Any PR whose diff
+    # touches ONLY these paths never triggers this workflow (trigger-level
+    # filter, zero runner minutes) -- not a job that runs and then skips.
+    # A mixed PR (docs + anything else) still runs normally: GitHub only
+    # skips the workflow when every changed file matches paths-ignore.
+    #
+    # KNOWN LIMITATION (see .github/DOCS_ONLY_CI_GATING.md): GitHub only
+    # evaluates paths-ignore/paths filters against the first 3,000 changed
+    # files of a diff. For PRs at/above that size, GitHub's own filter
+    # evaluation is not verified complete -- do not treat a "skipped" run
+    # as a fail-closed guarantee; split the PR or validate manually.
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'OPTIONS_RULES.md'
+      - 'STRATEGY_RULES.md'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -58,9 +77,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: dockerfile
