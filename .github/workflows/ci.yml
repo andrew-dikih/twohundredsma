@@ -18,12 +18,20 @@ on:
     # evaluates paths-ignore/paths filters against the first 3,000 changed
     # files of a diff. For PRs at/above that size, GitHub's own filter
     # evaluation is not verified complete -- do not treat a "skipped" run
-    # as a fail-closed guarantee; split the PR or validate manually.
+    # as a fail-closed guarantee; split the PR or manually dispatch this
+    # workflow (see workflow_dispatch below).
     paths-ignore:
       - 'README.md'
       - 'LICENSE'
       - 'OPTIONS_RULES.md'
       - 'STRATEGY_RULES.md'
+  # Manual full-CI recovery control: lets a human force this workflow to run
+  # regardless of the paths-ignore filter above (e.g. to validate an
+  # oversized diff that GitHub's path-filter evaluation cannot be trusted
+  # for -- see the >=3,000-file limitation in
+  # .github/DOCS_ONLY_CI_GATING.md). Not path-filtered and does not change
+  # normal pull_request-triggered behavior.
+  workflow_dispatch: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"

@@ -14,14 +14,19 @@ IMPORTANT: this harness does not (and cannot) change how GitHub evaluates
 ``paths``/``paths-ignore`` at trigger time. It documents and tests the
 *policy* those filters encode. See ``.github/DOCS_ONLY_CI_GATING.md`` for
 the full behavior matrix and the known >=3,000-file limitation.
+
+Deliberately dependency-free: the workflow YAML used here is a small,
+predictable subset (2-space indents, no tabs, no flow-style block
+scalars) so we extract the handful of fields we need with plain text/
+indentation parsing instead of pulling in a YAML library. A YAML parser
+is not part of this repo's runtime and must not become one just for a
+policy test.
 """
 from __future__ import annotations
 
 import fnmatch
 import enum
 from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
@@ -49,27 +54,146 @@ class Classification(str, enum.Enum):
     INDETERMINATE = "INDETERMINATE"  # diff too large to trust the filter
 
 
-def _load_workflow(name: str) -> dict:
-    with open(WORKFLOWS_DIR / name, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+def _read_workflow(name: str) -> list[str]:
+    return (WORKFLOWS_DIR / name).read_text(encoding="utf-8").splitlines()
 
 
-def _on_block(workflow: dict) -> dict:
-    # PyYAML (YAML 1.1) parses the bare scalar key ``on`` as the boolean
-    # True. Handle both so this harness survives a future switch to
-    # ``"on":`` quoted syntax.
-    if "on" in workflow:
-        return workflow["on"]
-    return workflow[True]
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
 
 
-def _extract_paths_ignore(workflow: dict, trigger: str) -> list[str]:
-    """Return the paths-ignore list for a given trigger (e.g. 'pull_request')."""
-    on_block = _on_block(workflow)
-    trigger_block = on_block.get(trigger)
-    if trigger_block is None:
-        raise AssertionError(f"trigger {trigger!r} not found")
-    return list(trigger_block.get("paths-ignore", []))
+def _find_key_line(lines: list[str], key: str, min_indent: int = 0, max_indent: int | None = None) -> int:
+    """Return the index of a line whose stripped content is exactly ``key``
+    (e.g. ``"on:"``), honoring an indent range so we don't match a
+    same-named key nested somewhere else."""
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        ind = _indent(line)
+        if stripped == key and ind >= min_indent and (max_indent is None or ind <= max_indent):
+            return i
+    raise AssertionError(f"key {key!r} not found (indent range {min_indent}-{max_indent})")
+
+
+def _find_trigger_block_range(lines: list[str], trigger: str) -> tuple[int, int, int]:
+    """Locate the ``on:`` block and a specific trigger key inside it
+    (e.g. 'pull_request', 'push'). Returns (on_indent, trigger_line_index,
+    trigger_indent)."""
+    on_idx = _find_key_line(lines, "on:", min_indent=0, max_indent=0)
+    on_indent = _indent(lines[on_idx])
+    # The trigger key is a line more indented than "on:" whose stripped
+    # content is exactly "<trigger>:".
+    trigger_idx = None
+    trigger_indent = None
+    for i in range(on_idx + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        ind = _indent(line)
+        if ind <= on_indent:
+            break  # left the "on:" block entirely
+        if line.strip() == f"{trigger}:":
+            trigger_idx = i
+            trigger_indent = ind
+            break
+    if trigger_idx is None:
+        raise AssertionError(f"trigger {trigger!r} not found under 'on:'")
+    return on_indent, trigger_idx, trigger_indent
+
+
+def _extract_paths_ignore(name: str, trigger: str) -> list[str]:
+    """Extract the paths-ignore glob list nested under on.<trigger>."""
+    lines = _read_workflow(name)
+    _on_indent, trigger_idx, trigger_indent = _find_trigger_block_range(lines, trigger)
+
+    # Find "paths-ignore:" nested inside this trigger's block (indent >
+    # trigger_indent), stopping once we dedent back to trigger_indent or
+    # less (i.e. we've left the trigger block without finding it).
+    pi_idx = None
+    pi_indent = None
+    for i in range(trigger_idx + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        ind = _indent(line)
+        if ind <= trigger_indent:
+            break
+        if line.strip() == "paths-ignore:":
+            pi_idx = i
+            pi_indent = ind
+            break
+    if pi_idx is None:
+        raise AssertionError(f"paths-ignore not found under on.{trigger} in {name}")
+
+    items: list[str] = []
+    for i in range(pi_idx + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        ind = _indent(line)
+        stripped = line.strip()
+        if ind <= pi_indent:
+            break
+        if not stripped.startswith("- "):
+            break
+        value = stripped[2:].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        items.append(value)
+    return items
+
+
+def _trigger_exists(name: str, trigger: str) -> bool:
+    """A trigger exists if it appears as a key directly under 'on:',
+    whether as a block (``trigger:`` followed by nested lines) or an
+    inline empty mapping (``trigger: {}``)."""
+    lines = _read_workflow(name)
+    on_idx = _find_key_line(lines, "on:", min_indent=0, max_indent=0)
+    on_indent = _indent(lines[on_idx])
+    for i in range(on_idx + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        ind = _indent(line)
+        if ind <= on_indent:
+            break
+        stripped = line.strip()
+        if stripped == f"{trigger}:" or stripped.startswith(f"{trigger}:"):
+            return True
+    return False
+
+
+def _workflow_dispatch_is_unfiltered(name: str) -> bool:
+    """workflow_dispatch must appear as a bare/empty trigger (e.g.
+    ``workflow_dispatch: {}``) directly under 'on:', i.e. it carries no
+    paths/paths-ignore filter of its own."""
+    lines = _read_workflow(name)
+    on_idx = _find_key_line(lines, "on:", min_indent=0, max_indent=0)
+    on_indent = _indent(lines[on_idx])
+    for i in range(on_idx + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        ind = _indent(line)
+        if ind <= on_indent:
+            break
+        stripped = line.strip()
+        if stripped.startswith("workflow_dispatch:"):
+            rest = stripped[len("workflow_dispatch:"):].strip()
+            if rest in ("", "{}"):
+                # If nothing follows inline, make sure no nested
+                # "paths"/"paths-ignore" key is indented under this key.
+                for j in range(i + 1, len(lines)):
+                    nxt = lines[j]
+                    if not nxt.strip():
+                        continue
+                    nxt_ind = _indent(nxt)
+                    if nxt_ind <= ind:
+                        return True  # nothing nested under workflow_dispatch
+                    if nxt.strip().startswith("paths"):
+                        return False
+                return True
+            return False
+    return False
 
 
 def classify_diff(
@@ -114,18 +238,15 @@ def test_workflow_files_exist():
 
 
 def test_ci_yml_paths_ignore_matches_canonical():
-    wf = _load_workflow("ci.yml")
-    assert _extract_paths_ignore(wf, "pull_request") == CANONICAL_DOCS_ONLY_ALLOWLIST
+    assert _extract_paths_ignore("ci.yml", "pull_request") == CANONICAL_DOCS_ONLY_ALLOWLIST
 
 
 def test_deploy_yml_paths_ignore_matches_canonical():
-    wf = _load_workflow("deploy.yml")
-    assert _extract_paths_ignore(wf, "push") == CANONICAL_DOCS_ONLY_ALLOWLIST
+    assert _extract_paths_ignore("deploy.yml", "push") == CANONICAL_DOCS_ONLY_ALLOWLIST
 
 
 def test_label_check_yml_paths_ignore_matches_canonical():
-    wf = _load_workflow("label-check.yml")
-    assert _extract_paths_ignore(wf, "pull_request") == CANONICAL_DOCS_ONLY_ALLOWLIST
+    assert _extract_paths_ignore("label-check.yml", "pull_request") == CANONICAL_DOCS_ONLY_ALLOWLIST
 
 
 def test_dot_github_never_in_allowlist():
@@ -145,13 +266,14 @@ def test_allowlist_has_no_wildcards():
         assert "*" not in pattern and "/" not in pattern
 
 
-def test_deploy_workflow_dispatch_present_and_unfiltered():
-    wf = _load_workflow("deploy.yml")
-    on_block = _on_block(wf)
-    assert "workflow_dispatch" in on_block
-    # workflow_dispatch has no paths-ignore key at all -- it is not subject
-    # to path filtering and always runs when manually triggered.
-    assert on_block["workflow_dispatch"] in ({}, None)
+def test_ci_and_deploy_have_manual_workflow_dispatch_recovery_control():
+    # Both the CI and CD workflows must expose an un-path-filtered manual
+    # dispatch trigger so an oversized (>=3,000-file) diff can be validated/
+    # deployed by hand instead of trusting GitHub's path-filter evaluation.
+    assert _trigger_exists("ci.yml", "workflow_dispatch")
+    assert _trigger_exists("deploy.yml", "workflow_dispatch")
+    assert _workflow_dispatch_is_unfiltered("ci.yml")
+    assert _workflow_dispatch_is_unfiltered("deploy.yml")
 
 
 # --- classify_diff behavior matrix -----------------------------------------
