@@ -4,6 +4,26 @@ on:
   push:
     branches:
       - develop
+    # Passive documentation-only boundary (mirrors ci.yml -- keep both in
+    # sync; tests/test_ci_docs_only_gating.py asserts they match). A push
+    # to develop that touches ONLY these root docs never builds or deploys
+    # an image. Deliberately a narrow allowlist of exact filenames (never a
+    # wildcard like **/*.md) so README/reference docs can never be confused
+    # with deployable output (e.g. a future dist/docs/** or docs shipped
+    # under advisor/templates/). Any other file, or a mixed diff, deploys
+    # normally. workflow_dispatch is manual and always runs regardless of
+    # this filter.
+    #
+    # KNOWN LIMITATION: GitHub only evaluates path filters against the
+    # first 3,000 changed files of a push/diff. See
+    # .github/DOCS_ONLY_CI_GATING.md -- for very large pushes, treat a
+    # skipped run as indeterminate, not a verified no-op, and validate/
+    # dispatch manually if needed.
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'OPTIONS_RULES.md'
+      - 'STRATEGY_RULES.md'
   workflow_dispatch: {}
 
 env:
@@ -28,14 +48,14 @@ jobs:
         run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Azure Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ vars.AZURE_REGISTRY_USERNAME }}
           password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: dockerfile
@@ -53,7 +73,7 @@ jobs:
       name: develop
     steps:
       - name: Log in to Azure
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 

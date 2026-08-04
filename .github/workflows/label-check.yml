@@ -10,6 +10,21 @@ on:
       - reopened
       - labeled
       - unlabeled
+    # Passive documentation-only boundary (mirrors ci.yml/deploy.yml -- kept
+    # in sync; see tests/test_ci_docs_only_gating.py). A PR to main whose
+    # diff touches ONLY these root docs never triggers this policy check, so
+    # it costs zero runner minutes. This means a docs-only PR to main does
+    # not need the "release" label -- acceptable because no deploy is ever
+    # triggered by these files (deploy.yml only builds/pushes from develop).
+    # A mixed PR still runs the check normally.
+    #
+    # KNOWN LIMITATION: see .github/DOCS_ONLY_CI_GATING.md -- GitHub path
+    # filters are unverified beyond the first 3,000 changed files of a diff.
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - 'OPTIONS_RULES.md'
+      - 'STRATEGY_RULES.md'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
